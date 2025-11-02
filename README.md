@@ -1,5 +1,5 @@
 Async10
-# 🚗 Akıllı Araçlarda Blokzincir Tabanlı Güvenlik ve Anomali Analizi
+# 🚗Elektrikli Araç Şarj Sistemlerinde Güvenlik Modeli
 
 ## 🔍 Proje Tanımı
 Bu proje, **elektrikli araç şarj altyapılarında (EVCS)** kullanılan **OCPP (Open Charge Point Protocol)** iletişimini ve **araç içi CAN veri yolu** etkileşimini simüle ederek, **siber güvenlik açısından anomali tespiti ve analizini** amaçlamaktadır.  
