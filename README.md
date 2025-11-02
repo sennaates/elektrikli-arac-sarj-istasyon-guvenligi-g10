@@ -1,2 +1,2 @@
-# Elektrikli Araç Şarj İstasyon Güvenliği (Grup 10)
+Async10
 BSG dersi kapsamında yürütecek olduğumuz projeye ait repo.
