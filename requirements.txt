@@ -1,0 +1,35 @@
+# Core Dependencies
+python-can==4.3.1
+cantools==39.4.5
+
+# OCPP Protocol
+ocpp==0.24.0
+websockets==12.0
+
+# Web Framework & API
+fastapi==0.109.2
+uvicorn[standard]==0.27.1
+pydantic==2.6.1
+
+# Blockchain & Cryptography
+ecdsa==0.18.0
+cryptography==42.0.2
+
+# ML & Data Science
+scikit-learn==1.4.0
+numpy==1.26.3
+pandas==2.2.0
+joblib==1.3.2
+# tensorflow==2.15.0  # Opsiyonel: LSTM için (büyük boyut)
+# torch==2.1.2        # Alternatif: PyTorch
+
+# Dashboard
+streamlit==1.31.0
+plotly==5.18.0
+watchdog==4.0.0
+
+# Utilities
+aiohttp==3.9.3
+python-dotenv==1.0.1
+loguru==0.7.2
+
