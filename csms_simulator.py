@@ -12,10 +12,12 @@ from loguru import logger
 class SimpleCSMS:
     """Basit CSMS simülatörü"""
     
-    def __init__(self, host="0.0.0.0", port=9000):
+    def __init__(self, host="0.0.0.0", port=9000, auto_test: bool = False):
         self.host = host
         self.port = port
         self.connected_chargers = {}
+        self.auto_test = auto_test
+        self.test_task = None
     
     async def handle_client(self, websocket, path):
         """Client bağlantısını handle et"""
@@ -40,7 +42,12 @@ class SimpleCSMS:
                         
                         # Action'a göre yanıt üret
                         if action == "BootNotification":
+                            # Charge Point ID'yi al (chargePointVendor veya chargePointModel'den)
                             charger_id = payload.get("chargePointVendor", "Unknown")
+                            # Eğer CP_001 gibi bir ID varsa onu kullan
+                            if "CP_" in str(payload.get("chargePointModel", "")):
+                                charger_id = payload.get("chargePointModel", charger_id)
+                            
                             self.connected_chargers[charger_id] = websocket
                             
                             response = [
@@ -54,6 +61,13 @@ class SimpleCSMS:
                             ]
                             
                             logger.success(f"✓ {charger_id} kabul edildi")
+                            
+                            # Otomatik test modu aktifse test komutlarını gönder
+                            if self.auto_test:
+                                logger.info("🧪 Otomatik test modu aktif, test komutları gönderilecek...")
+                                self.test_task = asyncio.create_task(
+                                    self.auto_send_test_commands(charger_id)
+                                )
                         
                         elif action == "Heartbeat":
                             response = [
@@ -124,6 +138,78 @@ class SimpleCSMS:
         except Exception as e:
             logger.error(f"Komut gönderme hatası: {e}")
     
+    async def auto_send_test_commands(self, charger_id: str):
+        """Test için otomatik komut gönder"""
+        await asyncio.sleep(5)  # Bridge'in tam bağlanmasını bekle
+        
+        if charger_id not in self.connected_chargers:
+            logger.warning("Şarj istasyonu bağlantısı kayboldu")
+            return
+        
+        logger.info("="*60)
+        logger.info("🧪 OTOMATIK TEST KOMUTLARI BAŞLATILIYOR")
+        logger.info("="*60)
+        
+        # Senaryo #1: Timing anomaly
+        logger.info("\n📋 Senaryo #1: Timing Anomaly Test")
+        logger.info("📤 RemoteStartTransaction gönderiliyor...")
+        await self.send_remote_command(
+            charger_id,
+            "RemoteStartTransaction",
+            {"connectorId": 1, "idTag": "TEST_001"}
+        )
+        
+        await asyncio.sleep(1.0)  # 1 saniye bekle (K1 kuralı tetiklenmeli)
+        
+        logger.info("📤 RemoteStopTransaction gönderiliyor (1 saniye sonra - timing anomaly)...")
+        await self.send_remote_command(
+            charger_id,
+            "RemoteStopTransaction",
+            {"transactionId": 1}
+        )
+        
+        await asyncio.sleep(3)
+        
+        # Senaryo #2: OCPP flooding
+        logger.info("\n📋 Senaryo #2: OCPP Message Flooding Test")
+        logger.info("📤 20 Heartbeat mesajı gönderiliyor (20 mesaj/s, eşik: 5 mesaj/s)...")
+        for i in range(20):
+            await self.send_remote_command(
+                charger_id,
+                "Heartbeat",
+                {}
+            )
+            await asyncio.sleep(0.05)  # 20 mesaj/saniye
+        
+        await asyncio.sleep(3)
+        
+        # Senaryo #3: MeterValues (sampling manipulation için)
+        logger.info("\n📋 Senaryo #3: MeterValues Test (Sampling Manipulation)")
+        logger.info("📤 Düşük frekanslı MeterValues gönderiliyor...")
+        for i in range(3):
+            await self.send_remote_command(
+                charger_id,
+                "MeterValues",
+                {
+                    "connectorId": 1,
+                    "transactionId": 1,
+                    "meterValue": [{
+                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                        "sampledValue": [{
+                            "value": str(10.0 + (i * 0.1)),
+                            "context": "Sample.Periodic",
+                            "format": "Raw",
+                            "measurand": "Energy.Active.Import.Register",
+                            "unit": "kWh"
+                        }]
+                    }]
+                }
+            )
+            await asyncio.sleep(60)  # Her 60 saniyede bir (düşük rate)
+        
+        logger.info("\n✅ Otomatik test komutları tamamlandı!")
+        logger.info("="*60)
+    
     async def start(self):
         """CSMS sunucusunu başlat"""
         logger.info("="*60)
@@ -146,6 +232,22 @@ class SimpleCSMS:
 
 async def main():
     """Ana entry point"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="CSMS Simülatörü")
+    parser.add_argument(
+        "--auto-test",
+        action="store_true",
+        help="Otomatik test komutlarını gönder (Senaryo #1, #2, #3)"
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=9000,
+        help="CSMS portu (default: 9000)"
+    )
+    args = parser.parse_args()
+    
     # Logger config
     logger.remove()
     logger.add(
@@ -154,7 +256,11 @@ async def main():
         format="<green>{time:HH:mm:ss}</green> | <level>{level:8}</level> | <level>{message}</level>"
     )
     
-    csms = SimpleCSMS(host="0.0.0.0", port=9000)
+    csms = SimpleCSMS(host="0.0.0.0", port=args.port, auto_test=args.auto_test)
+    
+    if args.auto_test:
+        logger.info("🧪 Otomatik test modu: AKTİF")
+        logger.info("   Bridge bağlandığında test komutları otomatik gönderilecek")
     
     try:
         await csms.start()

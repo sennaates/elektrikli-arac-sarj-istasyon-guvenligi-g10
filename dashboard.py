@@ -391,7 +391,12 @@ if stats is not None:
     
     with col2:
         ids_stats = stats.get("ids", {})
+        # Önce IDS'den al
         total_alerts = ids_stats.get("total_alerts", 0)
+        # Sonra /api/alerts'ten gerçek sayıyı al (daha doğru)
+        alerts_check = fetch_api("/api/alerts?count=100")
+        if alerts_check:
+            total_alerts = len(alerts_check)
         st.markdown(create_metric_card("Toplam Alert", total_alerts, icon="🚨"), unsafe_allow_html=True)
     
     with col3:
@@ -412,12 +417,15 @@ if stats is not None:
     if show_alerts:
         st.markdown('<div class="section-header">🚨 Real-Time Alerts</div>', unsafe_allow_html=True)
         
-        alerts = fetch_api("/api/alerts?count=10")
+        # Tüm alert'leri al (sayım için)
+        all_alerts = fetch_api("/api/alerts?count=100")
+        # Son 10 alert'i göster (listeleme için)
+        alerts = all_alerts[:10] if all_alerts else []
         
-        if alerts and len(alerts) > 0:
-            # Severity distribution cards
+        if all_alerts and len(all_alerts) > 0:
+            # Severity distribution cards - TÜM alert'lerden say
             alert_counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
-            for alert in alerts:
+            for alert in all_alerts:
                 severity = alert.get("severity", "LOW")
                 alert_counts[severity] = alert_counts.get(severity, 0) + 1
             

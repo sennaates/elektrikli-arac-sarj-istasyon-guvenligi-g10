@@ -215,33 +215,107 @@ async def get_ids_stats():
 @app.get("/api/alerts")
 async def get_alerts(count: int = 20, severity: Optional[str] = None):
     """Alert'leri getir"""
+    all_alerts = []
+    
     # Bridge'den gelen alerts varsa onları kullan
     if state.bridge_active and state.bridge_stats and "ids" in state.bridge_stats:
         ids_stats = state.bridge_stats["ids"]
         if "recent_alerts" in ids_stats:
-            alerts = ids_stats["recent_alerts"][:count]
-            # Severity filtresi
+            all_alerts.extend(ids_stats["recent_alerts"])
+    
+    # State.ids'den alert'leri al
+    if state.ids:
             if severity:
-                alerts = [a for a in alerts if a.get("severity") == severity]
-            return alerts
+            alerts = state.ids.get_alerts_by_severity(severity)
         else:
-            # Bridge aktif ama recent_alerts yok, boş liste döndür
-            return []
+            alerts = state.ids.get_recent_alerts(count * 2)  # Daha fazla al, sonra filtrele
+        
+        all_alerts.extend([alert.to_dict() for alert in alerts])
     
-    # Yoksa mevcut state'den oku
-    if not state.ids:
-        # Bridge aktif değilse 503 döndür
-        if not state.bridge_active:
-            return JSONResponse({"error": "IDS not initialized"}, status_code=503)
-        # Bridge aktif ama state yok, boş liste döndür
-        return []
+    # Test alert'lerini de ekle (eğer varsa)
+    if hasattr(state, "test_alerts") and state.test_alerts:
+        all_alerts.extend(state.test_alerts)
     
+    # Timestamp'e göre sırala (en yeni önce)
+    all_alerts.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
+    
+    # Severity filtresi
     if severity:
-        alerts = state.ids.get_alerts_by_severity(severity)
-    else:
-        alerts = state.ids.get_recent_alerts(count)
+        all_alerts = [a for a in all_alerts if a.get("severity") == severity]
     
-    return [alert.to_dict() for alert in alerts]
+    # Count'a göre sınırla
+    return all_alerts[:count]
+
+
+@app.post("/api/alerts")
+async def post_alert(alert_data: dict):
+    """Alert'i API server'a ekle (test scriptleri için)"""
+    try:
+        # Eğer state.ids varsa alert'i ekle
+        if state.ids:
+            # Alert objesi oluştur
+            from utils.ids import Alert
+            alert = Alert(
+                alert_id=alert_data.get("alert_id", f"TEST-{int(time.time())}"),
+                timestamp=alert_data.get("timestamp", time.time()),
+                severity=alert_data.get("severity", "MEDIUM"),
+                alert_type=alert_data.get("alert_type", "TEST_ALERT"),
+                description=alert_data.get("description", ""),
+                source=alert_data.get("source", "TEST"),
+                data=alert_data.get("data", {})
+            )
+            # IDS'in alert listesine ekle
+            state.ids.alerts.append(alert)
+            state.ids.stats.total_alerts += 1
+            
+            # Alert breakdown'u güncelle
+            if not hasattr(state.ids.stats, 'alert_breakdown'):
+                state.ids.stats.alert_breakdown = {}
+            state.ids.stats.alert_breakdown[alert.severity] = \
+                state.ids.stats.alert_breakdown.get(alert.severity, 0) + 1
+            
+            logger.info(f"✓ Test alert'i eklendi: {alert.alert_type} ({alert.severity})")
+            
+            # WebSocket'e broadcast et
+            if state.event_queue:
+                try:
+                    await state.event_queue.put({
+                        "type": "alert",
+                        "data": alert.to_dict(),
+                        "timestamp": time.time()
+                    })
+                except Exception as e:
+                    logger.debug(f"WebSocket broadcast hatası: {e}")
+            
+            return {"status": "success", "alert_id": alert.alert_id}
+    else:
+            # IDS yoksa, geçici bir liste oluştur
+            if not hasattr(state, "test_alerts"):
+                state.test_alerts = []
+            
+            # Timestamp ISO formatını ekle
+            if "timestamp_iso" not in alert_data and "timestamp" in alert_data:
+                import time as time_module
+                alert_data["timestamp_iso"] = time_module.strftime(
+                    "%Y-%m-%d %H:%M:%S",
+                    time_module.localtime(alert_data["timestamp"])
+                )
+            
+            state.test_alerts.append(alert_data)
+            
+            # Test alert sayacını güncelle
+            if not hasattr(state, "test_alert_count"):
+                state.test_alert_count = 0
+            state.test_alert_count += 1
+            
+            logger.info(f"✓ Test alert'i geçici listeye eklendi: {alert_data.get('alert_type', 'UNKNOWN')}")
+            return {"status": "success", "alert_id": alert_data.get("alert_id"), "note": "IDS not initialized, stored in temp list"}
+    
+    except Exception as e:
+        logger.error(f"Alert ekleme hatası: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
 @app.get("/api/stats")
@@ -251,14 +325,35 @@ async def get_all_stats():
     
     # Bridge'den gelen stats varsa onları kullan
     if state.bridge_active and state.bridge_stats:
-        stats = state.bridge_stats
+        stats = state.bridge_stats.copy()
+        
+        # Test alert'lerini de ekle
+        if hasattr(state, "test_alerts") and state.test_alerts:
+            if "ids" not in stats:
+                stats["ids"] = {}
+            if "total_alerts" not in stats["ids"]:
+                stats["ids"]["total_alerts"] = 0
+            stats["ids"]["total_alerts"] += len(state.test_alerts)
     else:
         # Yoksa mevcut state'den oku
         if state.blockchain:
             stats["blockchain"] = state.blockchain.get_chain_stats()
         
         if state.ids:
-            stats["ids"] = state.ids.get_stats()
+            ids_stats = state.ids.get_stats()
+            # Test alert'lerini de ekle
+            if hasattr(state, "test_alerts") and state.test_alerts:
+                ids_stats["total_alerts"] = ids_stats.get("total_alerts", 0) + len(state.test_alerts)
+            stats["ids"] = ids_stats
+        elif hasattr(state, "test_alerts") and state.test_alerts:
+            # IDS yok ama test alert'leri var
+            stats["ids"] = {
+                "total_alerts": len(state.test_alerts),
+                "total_ocpp_messages": 0,
+                "total_can_frames": 0,
+                "authorized_can_frames": 0,
+                "unauthorized_can_frames": 0
+            }
         
         if state.ml_ids:
             stats["ml"] = {
