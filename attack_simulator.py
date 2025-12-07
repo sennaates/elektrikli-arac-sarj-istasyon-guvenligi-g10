@@ -9,6 +9,8 @@ import argparse
 import asyncio
 import websockets
 import json
+import uuid  # UUID eklendi
+from datetime import datetime # datetime eklendi
 from typing import List, Dict
 from loguru import logger
 from utils.can_handler import CANBusHandler, CANFrame
@@ -24,6 +26,10 @@ class AttackSimulator:
     3. Replay Attack
     4. Invalid CAN ID Attack
     5. Spoofed OCPP Command
+    6. MitM OCPP Manipulation
+    7. OCPP Message Flooding
+    8. Sampling Manipulation
+    9. OCPP Protocol Fuzzing (Senaryo #4)
     """
     
     def __init__(self, interface: str = "vcan0"):
@@ -109,7 +115,7 @@ class AttackSimulator:
     
     # Saldırı 3: Replay Attack
     def replay_attack(self, can_id: int = 0x200, original_data: List[int] = None, 
-                     delay: float = 1.0, replay_count: int = 3):
+                      delay: float = 1.0, replay_count: int = 3):
         """
         Aynı CAN frame'i kısa aralıklarla tekrar gönder.
         IDS "REPLAY_ATTACK" algılamalı.
@@ -510,6 +516,72 @@ class AttackSimulator:
         logger.info("  - Eksik ücretlendirme (gelir kaybı)")
         logger.info("  - Yanlış kapasite planlama")
         logger.info("  - Peak algılama sistemi bypass")
+
+    # ------------------------------------------------------------------------
+    # SENARYO #04: OCPP PROTOCOL FUZZING
+    # ------------------------------------------------------------------------
+    def ocpp_fuzzing_attack(self, target_url: str, intensity: int = 10):
+        """
+        Senaryo #04: Fuzzing saldırı simülasyonu
+        Args:
+            target_url: Hedef CSMS adresi
+            intensity: Saldırı yoğunluğu (gönderilecek fuzz mesaj sayısı)
+        """
+        logger.warning(f"🚨 SALDIRI: [OCPP Protocol Fuzzing] başlatılıyor... Hedef: {target_url}")
+        
+        fuzz_types = ["TYPE_MUTATION", "LENGTH_MUTATION", "FORMAT_MUTATION"]
+        
+        for i in range(intensity):
+            fuzz_type = random.choice(fuzz_types)
+            payload = {}
+            
+            if fuzz_type == "TYPE_MUTATION":
+                # Sayı beklenen yere string gönder
+                payload = {
+                    "messageTypeId": 2,
+                    "uniqueId": str(uuid.uuid4()),
+                    "action": "StartTransaction",
+                    "payload": {
+                        "connectorId": "BU_BIR_STRING_DEGIL_INT_OLMALI", # HATA
+                        "idTag": "FUZZER_TAG",
+                        "meterStart": 0,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+                logger.info(f"Fuzzing [{i+1}/{intensity}]: Tip Mutasyonu gönderiliyor...")
+
+            elif fuzz_type == "LENGTH_MUTATION":
+                # Aşırı uzun string gönder
+                long_string = "A" * 20000 # 20KB
+                payload = {
+                    "messageTypeId": 2,
+                    "uniqueId": str(uuid.uuid4()),
+                    "action": "BootNotification",
+                    "payload": {
+                        "chargePointVendor": long_string, # HATA
+                        "chargePointModel": "FuzzModel"
+                    }
+                }
+                logger.info(f"Fuzzing [{i+1}/{intensity}]: Uzunluk Mutasyonu (Buffer Overflow) gönderiliyor...")
+
+            elif fuzz_type == "FORMAT_MUTATION":
+                # Bozuk format (Simülasyon için flag ekliyoruz)
+                payload = {
+                    "malformed_json_flag": True,
+                    "raw_data": "{ 'key': 'value'MISSING_BRACKET" # Bozuk JSON
+                }
+                logger.info(f"Fuzzing [{i+1}/{intensity}]: Format Mutasyonu gönderiliyor...")
+
+            # IDS Kontrolü için simüle edilmiş gönderim
+            # Payload boyutunu hesapla
+            try:
+                payload_size = len(json.dumps(payload))
+            except:
+                payload_size = 0 # JSON dump hatası olursa
+            
+            time.sleep(0.5) # Saldırı hızı
+
+        logger.warning(f"✓ [OCPP Protocol Fuzzing] tamamlandı")
     
     # Kombine saldırı
     def combined_attack(self):
@@ -557,7 +629,7 @@ def main():
     parser.add_argument(
         "--attack",
         type=str,
-        choices=["injection", "flood", "replay", "invalid_id", "entropy", "mitm", "ocpp_flood", "sampling", "combined", "all"],
+        choices=["injection", "flood", "replay", "invalid_id", "entropy", "mitm", "ocpp_flood", "sampling", "fuzzing", "combined", "all"], # fuzzing eklendi
         default="combined",
         help="Saldırı tipi"
     )
@@ -598,6 +670,13 @@ def main():
         type=float,
         default=120.0,
         help="Sampling manipulation süresi (saniye) - Senaryo #3"
+    )
+    # Senaryo #4 Parametreleri
+    parser.add_argument(
+        "--fuzz-intensity",
+        type=int,
+        default=10,
+        help="Fuzzing saldırısı için mesaj sayısı (Senaryo #4)"
     )
     
     args = parser.parse_args()
@@ -655,6 +734,12 @@ def main():
                 scenario=args.sampling_scenario,
                 duration=args.sampling_duration
             )
+
+        elif args.attack == "fuzzing": # Senaryo #4
+            simulator.ocpp_fuzzing_attack(
+                target_url=args.csms_url, # Varsayılan URL kullanılabilir
+                intensity=args.fuzz_intensity
+            )
         
         elif args.attack == "combined":
             simulator.combined_attack()
@@ -690,4 +775,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

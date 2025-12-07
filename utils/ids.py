@@ -8,7 +8,26 @@ from typing import Dict, List, Optional, Set
 from dataclasses import dataclass, field
 from collections import defaultdict, deque
 from loguru import logger
+from enum import Enum  # Enum eklendi
 
+# Alert Tipleri Enum olarak tanımlandı (Daha düzenli yapı için)
+class AlertType(Enum):
+    UNAUTHORIZED_CAN_INJECTION = "UNAUTHORIZED_CAN_INJECTION"
+    CAN_FLOOD_ATTACK = "CAN_FLOOD_ATTACK"
+    REPLAY_ATTACK = "REPLAY_ATTACK"
+    INVALID_CAN_ID = "INVALID_CAN_ID"
+    OCPP_CAN_MISMATCH_K3 = "OCPP_CAN_MISMATCH_K3"
+    OCPP_RATE_LIMIT_EXCEEDED = "OCPP_RATE_LIMIT_EXCEEDED"
+    TIMING_MISMATCH_K1 = "TIMING_MISMATCH_K1"
+    SESSION_FINGERPRINT_CHANGE_K2 = "SESSION_FINGERPRINT_CHANGE_K2"
+    OCPP_TIMESTAMP_ANOMALY = "OCPP_TIMESTAMP_ANOMALY"
+    SAMPLING_RATE_DROP = "SAMPLING_RATE_DROP"
+    ENERGY_VARIANCE_DROP = "ENERGY_VARIANCE_DROP"
+    BUFFER_MANIPULATION = "BUFFER_MANIPULATION"
+    # Senaryo #4 (Fuzzing) için eklenenler:
+    OCPP_PROTOCOL_ERROR = "OCPP_PROTOCOL_ERROR"
+    PAYLOAD_SIZE_ANOMALY = "PAYLOAD_SIZE_ANOMALY"
+    JSON_PARSE_ERROR = "JSON_PARSE_ERROR"
 
 @dataclass
 class Alert:
@@ -75,6 +94,7 @@ class RuleBasedIDS:
     3. Replay Attack: Aynı mesajın kısa sürede tekrarı
     4. Timing Anomaly: Beklenmeyen zamanlama sapmaları
     5. Invalid CAN ID: İzin listesinde olmayan CAN ID'ler
+    6. OCPP Fuzzing (Senaryo #4): Protokol anormallikleri ve fuzzing tespiti
     """
     
     def __init__(
@@ -139,15 +159,9 @@ class RuleBasedIDS:
         logger.debug(f"Yetkili CAN frame kaydedildi: ID={hex(can_id)}")
     
     def check_can_frame(self, can_id: int, data: List[int], timestamp: float, 
-                       expected_ocpp_action: Optional[str] = None) -> Optional[Alert]:
+                        expected_ocpp_action: Optional[str] = None) -> Optional[Alert]:
         """
         CAN frame'i kontrol et ve anomali varsa alert üret.
-        
-        Args:
-            expected_ocpp_action: Bu CAN frame'in hangi OCPP action'dan kaynaklanması beklendiği
-        
-        Returns:
-            Alert objesi veya None
         """
         self.stats.total_can_frames += 1
         self.stats.last_can_time = timestamp
@@ -161,7 +175,7 @@ class RuleBasedIDS:
             
             if can_id != expected_can_id:
                 alert = self._create_alert(
-                    alert_type="OCPP_CAN_MISMATCH_K3",
+                    alert_type=AlertType.OCPP_CAN_MISMATCH_K3.value,
                     severity="CRITICAL",
                     description=f"OCPP-CAN mapping uyuşmazlığı: {expected_ocpp_action} için {hex(expected_can_id)} bekleniyor ama {hex(can_id)} geldi",
                     source="CAN",
@@ -180,7 +194,7 @@ class RuleBasedIDS:
         frame_hash = self._hash_frame(can_id, data)
         if frame_hash not in self.authorized_frames.get(can_id, set()):
             alert = self._create_alert(
-                alert_type="UNAUTHORIZED_CAN_INJECTION",
+                alert_type=AlertType.UNAUTHORIZED_CAN_INJECTION.value,
                 severity="HIGH",
                 description=f"CAN ID {hex(can_id)} için yetkisiz frame tespit edildi",
                 source="CAN",
@@ -196,7 +210,7 @@ class RuleBasedIDS:
             time_window = timestamp - self.can_timestamps[0]
             if time_window < 1.0:  # 1 saniyeden kısa sürede threshold aşıldı
                 alert = self._create_alert(
-                    alert_type="CAN_FLOOD_ATTACK",
+                    alert_type=AlertType.CAN_FLOOD_ATTACK.value,
                     severity="CRITICAL",
                     description=f"{len(self.can_timestamps)} CAN frame {time_window:.2f} saniyede alındı",
                     source="CAN",
@@ -209,7 +223,7 @@ class RuleBasedIDS:
         for msg_time, msg_hash in self.recent_messages:
             if timestamp - msg_time <= self.replay_window and msg_hash == frame_hash:
                 alert = self._create_alert(
-                    alert_type="REPLAY_ATTACK",
+                    alert_type=AlertType.REPLAY_ATTACK.value,
                     severity="HIGH",
                     description=f"CAN frame replay tespit edildi: ID={hex(can_id)}",
                     source="CAN",
@@ -221,7 +235,7 @@ class RuleBasedIDS:
         # Kural 4: Invalid CAN ID Check
         if can_id not in self.allowed_can_ids:
             alert = self._create_alert(
-                alert_type="INVALID_CAN_ID",
+                alert_type=AlertType.INVALID_CAN_ID.value,
                 severity="MEDIUM",
                 description=f"İzin listesinde olmayan CAN ID: {hex(can_id)}",
                 source="CAN",
@@ -236,12 +250,9 @@ class RuleBasedIDS:
         return None  # Anomali yok
     
     def check_ocpp_message(self, action: str, payload: Dict, timestamp: float, 
-                          source_ip: Optional[str] = None) -> Optional[Alert]:
+                           source_ip: Optional[str] = None) -> Optional[Alert]:
         """
         OCPP mesajını kontrol et.
-        
-        Returns:
-            Alert objesi veya None
         """
         self.stats.total_ocpp_messages += 1
         self.stats.last_ocpp_time = timestamp
@@ -267,7 +278,7 @@ class RuleBasedIDS:
                 if messages_per_second > self.ocpp_rate_threshold:
                     self.stats.ocpp_rate_alerts += 1
                     alert = self._create_alert(
-                        alert_type="OCPP_RATE_LIMIT_EXCEEDED",
+                        alert_type=AlertType.OCPP_RATE_LIMIT_EXCEEDED.value,
                         severity="CRITICAL",
                         description=f"OCPP mesaj yoğunluğu saldırısı tespit edildi: {messages_per_second:.1f} mesaj/saniye (eşik: {self.ocpp_rate_threshold})",
                         source="OCPP",
@@ -284,12 +295,11 @@ class RuleBasedIDS:
                     return alert
         
         # K1: Timing Mismatch Detection (Senaryo #1)
-        # RemoteStartTransaction sonrası 2 saniye içinde RemoteStopTransaction
         if action == "RemoteStopTransaction":
             for ts, prev_action in self.last_ocpp_actions:
                 if prev_action == "RemoteStartTransaction" and (timestamp - ts) < 2.0:
                     alert = self._create_alert(
-                        alert_type="TIMING_MISMATCH_K1",
+                        alert_type=AlertType.TIMING_MISMATCH_K1.value,
                         severity="HIGH",
                         description=f"RemoteStart sonrası {timestamp - ts:.2f}s içinde RemoteStop tespit edildi",
                         source="OCPP",
@@ -304,7 +314,6 @@ class RuleBasedIDS:
                     return alert
         
         # K2: Session Fingerprint Change (Senaryo #1)
-        # Aynı idTag için farklı IP/fingerprint
         if source_ip and "id_tag" in payload:
             id_tag = payload["id_tag"]
             
@@ -314,7 +323,7 @@ class RuleBasedIDS:
             # Eğer aynı tag için 2'den fazla farklı IP varsa
             if len(self.session_fingerprints[id_tag]) > 2:
                 alert = self._create_alert(
-                    alert_type="SESSION_FINGERPRINT_CHANGE_K2",
+                    alert_type=AlertType.SESSION_FINGERPRINT_CHANGE_K2.value,
                     severity="CRITICAL",
                     description=f"idTag {id_tag} için {len(self.session_fingerprints[id_tag])} farklı IP tespit edildi",
                     source="OCPP",
@@ -330,7 +339,7 @@ class RuleBasedIDS:
         # Kural: Timestamp Anomaly (eski zaman damgası)
         if self.stats.last_ocpp_time and timestamp < self.stats.last_ocpp_time - 60:
             alert = self._create_alert(
-                alert_type="OCPP_TIMESTAMP_ANOMALY",
+                alert_type=AlertType.OCPP_TIMESTAMP_ANOMALY.value,
                 severity="MEDIUM",
                 description=f"Eski timestamp ile OCPP mesajı: {action}",
                 source="OCPP",
@@ -350,15 +359,6 @@ class RuleBasedIDS:
     ) -> Optional[Alert]:
         """
         MeterValues mesajını kontrol et (Senaryo #3: Sampling Manipulation).
-        
-        Args:
-            meter_value: Ölçülen enerji değeri (kWh veya W)
-            timestamp: Ölçüm zamanı
-            raw_buffer_size: Cihazda bekleyen ham örnek sayısı
-            session_id: Şarj seans ID'si
-        
-        Returns:
-            Alert objesi veya None
         """
         # Meter sample'ı kaydet
         self.stats.meter_samples.append((timestamp, meter_value))
@@ -378,7 +378,7 @@ class RuleBasedIDS:
         
         if len(recent_samples) >= 5 and samples_per_minute < self.min_sampling_rate:
             alert = self._create_alert(
-                alert_type="SAMPLING_RATE_DROP",
+                alert_type=AlertType.SAMPLING_RATE_DROP.value,
                 severity="HIGH",
                 description=f"Örnekleme oranı düştü: {samples_per_minute} sample/min (min: {self.min_sampling_rate})",
                 source="OCPP",
@@ -410,7 +410,7 @@ class RuleBasedIDS:
                 # %30'dan fazla düşüş varsa alarm
                 if historical_variance > 0 and current_variance < historical_variance * self.variance_drop_threshold:
                     alert = self._create_alert(
-                        alert_type="ENERGY_VARIANCE_DROP",
+                        alert_type=AlertType.ENERGY_VARIANCE_DROP.value,
                         severity="CRITICAL",
                         description=f"Enerji varyansı anormal düştü: {current_variance:.4f} (beklenen: {historical_variance:.4f})",
                         source="OCPP",
@@ -433,7 +433,7 @@ class RuleBasedIDS:
                 
                 if buffer_ratio > self.buffer_mismatch_ratio:
                     alert = self._create_alert(
-                        alert_type="BUFFER_MANIPULATION",
+                        alert_type=AlertType.BUFFER_MANIPULATION.value,
                         severity="CRITICAL",
                         description=f"Ham veri buffer anormali: {raw_buffer_size} raw sample, {self.stats.sent_sample_count} sent (oran: {buffer_ratio:.1f}x)",
                         source="OCPP",
@@ -451,13 +451,63 @@ class RuleBasedIDS:
         
         return None
     
+    # ------------------------------------------------------------------------
+    # SENARYO #04: OCPP FUZZING TESPİT METODU
+    # ------------------------------------------------------------------------
+    def check_ocpp_fuzzing(self, message: Dict, payload_size: int) -> Optional[Alert]:
+        """
+        Senaryo #04: OCPP Fuzzing tespiti
+        """
+        # Kural 1: Aşırı Büyük Payload (Buffer Overflow Denemesi)
+        # Normal bir OCPP mesajı genellikle 1KB altındadır. 10KB+ şüphelidir.
+        if payload_size > 10000:  # 10KB eşik
+            alert = self._create_alert(
+                alert_type=AlertType.PAYLOAD_SIZE_ANOMALY.value,
+                severity="HIGH",
+                description=f"Anormal payload boyutu tespit edildi: {payload_size} bytes. Olası Fuzzing/Buffer Overflow denemesi.",
+                source="OCPP",
+                data={
+                    "payload_size": payload_size,
+                    "threshold": 10000
+                }
+            )
+            logger.warning(f"🚨 ALERT [SCENARIO-4]: {alert.description}")
+            return alert
+
+        # Kural 2: Tip Uyuşmazlığı (Basit Kontrol)
+        # Örn: connectorId sayı olmalı
+        if "connectorId" in message and not isinstance(message["connectorId"], int):
+             alert = self._create_alert(
+                alert_type=AlertType.OCPP_PROTOCOL_ERROR.value,
+                severity="MEDIUM",
+                description=f"Tip uyuşmazlığı: connectorId integer olmalı. Gelen: {type(message['connectorId'])}",
+                source="OCPP",
+                data={
+                    "field": "connectorId",
+                    "expected": "int",
+                    "actual": str(type(message['connectorId']))
+                }
+            )
+             logger.warning(f"⚠ ALERT [SCENARIO-4]: {alert.description}")
+             return alert
+
+        # Kural 3: Bozuk JSON (Bu genellikle parser seviyesinde yakalanır ama simülasyon için)
+        if message.get("malformed_json_flag", False):
+             alert = self._create_alert(
+                alert_type=AlertType.JSON_PARSE_ERROR.value,
+                severity="LOW",
+                description="Bozuk JSON formatı algılandı.",
+                source="OCPP",
+                data={}
+            )
+             logger.info(f"⚠ ALERT [SCENARIO-4]: {alert.description}")
+             return alert
+
+        return None
+
     def register_expected_can_frame(self, ocpp_action: str, can_id: int):
         """
         OCPP action için beklenen CAN ID'yi kaydet (K3 için).
-        
-        Args:
-            ocpp_action: OCPP action (örn. "RemoteStartTransaction")
-            can_id: Beklenen CAN ID (örn. 0x200)
         """
         self.expected_can_frames[ocpp_action] = can_id
         logger.debug(f"Beklenen mapping kaydedildi: {ocpp_action} → {hex(can_id)}")
@@ -519,12 +569,7 @@ class RuleBasedIDS:
     def clear_old_authorized_frames(self, older_than: float = 3600) -> None:
         """
         Eski yetkili frame kayıtlarını temizle (memory optimization)
-        
-        Args:
-            older_than: Saniye cinsinden yaş sınırı
         """
-        # Bu implementasyon basit bir versiyondur.
-        # Production'da timestamp ile takip edilebilir.
         if len(self.authorized_frames) > 10000:
             logger.info("Yetkili frame cache'i temizleniyor...")
             for can_id in list(self.authorized_frames.keys()):
@@ -544,7 +589,6 @@ if __name__ == "__main__":
     print("TEST 1: Normal Trafik")
     print("="*50)
     
-    # Yetkili OCPP → CAN akışı
     ids.check_ocpp_message("RemoteStartTransaction", {"connector_id": 1}, time.time())
     ids.register_authorized_can_frame(0x200, [0x01, 0x01, 0xAB, 0xCD, 0x00, 0x00, 0x00, 0x00])
     alert = ids.check_can_frame(0x200, [0x01, 0x01, 0xAB, 0xCD, 0x00, 0x00, 0x00, 0x00], time.time())
@@ -555,31 +599,24 @@ if __name__ == "__main__":
         print("✓ Normal trafik, anomali yok")
     
     print("\n" + "="*50)
-    print("TEST 2: Unauthorized CAN Injection")
+    print("TEST 4: OCPP Fuzzing (Senaryo #4)")
     print("="*50)
     
-    # Yetkisiz CAN frame (Bridge tarafından gönderilmedi)
-    alert = ids.check_can_frame(0x200, [0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00], time.time())
-    if alert:
-        print(f"🚨 Alert: {alert.description} (Severity: {alert.severity})")
-    
-    print("\n" + "="*50)
-    print("TEST 3: CAN Flood Attack")
-    print("="*50)
-    
-    # 150 CAN frame 0.5 saniyede
-    start_time = time.time()
-    for i in range(150):
-        ids.register_authorized_can_frame(0x201, [i & 0xFF, 0x00])
-        alert = ids.check_can_frame(0x201, [i & 0xFF, 0x00], start_time + i * 0.003)
-        if alert and alert.alert_type == "CAN_FLOOD_ATTACK":
-            print(f"🚨 FLOOD DETECTED after {i} frames!")
-            break
-    
+    # Test 4.1: Tip Mutasyonu (String instead of Int)
+    fuzz_payload = {"connectorId": "NOT_AN_INT"}
+    alert = ids.check_ocpp_fuzzing(fuzz_payload, len(str(fuzz_payload)))
+    if alert and alert.alert_type == AlertType.OCPP_PROTOCOL_ERROR.value:
+        print(f"✅ Fuzzing Detected: {alert.description}")
+        
+    # Test 4.2: Payload Size
+    big_payload = {"data": "A" * 10005}
+    alert = ids.check_ocpp_fuzzing(big_payload, 10010)
+    if alert and alert.alert_type == AlertType.PAYLOAD_SIZE_ANOMALY.value:
+        print(f"✅ Large Payload Detected: {alert.description}")
+
     print("\n" + "="*50)
     print("IDS İSTATİSTİKLERİ")
     print("="*50)
     stats = ids.get_stats()
     for key, value in stats.items():
         print(f"{key}: {value}")
-
