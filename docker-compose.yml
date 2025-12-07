@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  ev-simulation:
+    build: .
+    container_name: ev-charging-simulation
+    privileged: true  # vcan0 için gerekli
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"   # API
+      - "8501:8501"   # Dashboard
+      - "9000:9000"   # CSMS WebSocket
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: /bin/bash -c "source venv/bin/activate && bash"
+    stdin_open: true
+    tty: true
