@@ -214,6 +214,42 @@ python attack_simulator.py --attack all
 
 ---
 
+### 🆕 Senaryo 4: Duplicate Booking Attack (BSG Modülü)
+
+Bu senaryo, profesyonel OCPP simülatörü (`src/bsg/`) kullanarak **Duplicate Booking** saldırısını gösterir.
+
+**Terminal 1: CSMS Sunucusu (Vulnerable Mode)**
+```bash
+# Güvenlik açığı olan mod
+python -m src.bsg.cli server --port 9000 --vulnerable
+```
+
+**Terminal 2: Meşru Kullanıcı**
+```bash
+python examples/1_legit_user.py
+```
+
+**Terminal 3: Saldırgan (Aynı Reservation ID ile)**
+```bash
+python examples/2_attacker.py
+```
+
+**Beklenen Sonuç (Vulnerable Mode):**
+- ⚠️ Saldırgan aynı reservation ID ile şarj başlatabilir
+- İki işlem aynı anda aktif olur (güvenlik açığı)
+
+**Terminal 1: CSMS Sunucusu (Secure Mode)**
+```bash
+# Güvenli mod
+python -m src.bsg.cli server --port 9000 --secure
+```
+
+**Beklenen Sonuç (Secure Mode):**
+- 🛡️ Saldırganın isteği reddedilir
+- Yalnızca meşru kullanıcının işlemi aktif kalır
+
+---
+
 ## 🎯 Saldırı Senaryoları
 
 ### **Temel Saldırılar**
@@ -282,6 +318,75 @@ python attack_simulator.py --attack sampling --sampling-scenario buffer_manipula
 - **Kural-2:** variance drop > %70 → `ENERGY_VARIANCE_DROP`
 - **Kural-3:** raw/sent ratio > 2x → `BUFFER_MANIPULATION`
 - **Finansal Etki:** %15-30 gelir kaybı
+
+---
+
+---
+
+## 🆕 BSG Modülü API
+
+### ChargePointSimulator
+
+```python
+from src.bsg.chargepoint import ChargePointSimulator
+
+# Yeni ChargePoint oluştur
+cp = ChargePointSimulator(
+    charge_point_id="CP_001",
+    csms_url="ws://localhost:9000"
+)
+
+# Bağlan
+await cp.start()
+
+# İşlem başlat
+response = await cp.send_start_transaction(
+    reservation_id="RES_12345",
+    id_tag="USER_001",
+    connector_id=1
+)
+
+# İşlem durdur
+await cp.send_stop_transaction(transaction_id=response['transaction_id'])
+
+# Bağlantıyı kapat
+await cp.stop()
+```
+
+### CSMSimulator
+
+```python
+from src.bsg.csms import CSMSimulator
+
+# CSMS sunucusu oluştur
+csms = CSMSimulator(
+    host="0.0.0.0",
+    port=9000,
+    secure_mode=True  # Güvenli mod (duplicate booking engellenir)
+)
+
+# Sunucuyu başlat
+await csms.start()
+
+# İstatistikleri al
+stats = csms.get_statistics()
+
+# Sunucuyu durdur
+await csms.stop()
+```
+
+### CLI Kullanımı
+
+```bash
+# Sunucu başlat (güvenli mod)
+python -m src.bsg.cli server --port 9000 --secure
+
+# Sunucu başlat (güvenlik açığı modu)
+python -m src.bsg.cli server --port 9000 --vulnerable
+
+# Yardım
+python -m src.bsg.cli --help
+```
 
 ---
 
@@ -363,23 +468,44 @@ Test ortamında (Intel i5, 8GB RAM):
 ## 🧩 Modüler Yapı
 
 ```
-githubsmlsyn/
+elektrikli-arac-sarj-istasyon-guvenligi-g10/
+├── src/                       # 🆕 Professional OCPP Simulator Package
+│   └── bsg/
+│       ├── __init__.py
+│       ├── cli.py             # CLI arayüzü (server komutu)
+│       ├── chargepoint/
+│       │   ├── __init__.py
+│       │   └── simulator.py   # ChargePoint simülatörü
+│       ├── csms/
+│       │   ├── __init__.py
+│       │   └── server.py      # CSMS sunucu simülatörü
+│       └── utils/
+│           ├── __init__.py
+│           └── logging.py     # Logging utilities
+├── examples/                  # 🆕 Örnek Senaryolar
+│   ├── __init__.py
+│   ├── 1_legit_user.py        # Meşru kullanıcı simülasyonu
+│   └── 2_attacker.py          # Saldırgan simülasyonu (Duplicate Booking)
 ├── utils/
 │   ├── blockchain.py          # Blockchain core
 │   ├── can_handler.py         # CAN-Bus interface
 │   ├── ids.py                 # Rule-based IDS
-│   ├── ml_ids.py              # ML-based IDS
-│   └── feature_extractor.py   # Feature engineering
+│   └── ml_ids.py              # ML-based IDS
 ├── secure_bridge.py           # Ana bridge servisi
 ├── api_server.py              # REST API + WebSocket
 ├── dashboard.py               # Streamlit dashboard
 ├── attack_simulator.py        # Saldırı simülatörü
+├── csms_simulator.py          # Basit CSMS (test için)
 ├── training/
 │   └── train_ml_model.py      # ML eğitim scripti
 ├── tests/
-│   └── test_system.py         # Birim testleri
+│   ├── test_system.py         # Birim testleri
+│   ├── scenario_01_mitm_ocpp_manipulation.py
+│   ├── scenario_02_ocpp_dos_flooding.py
+│   └── scenario_03_sampling_manipulation.py
 ├── models/                    # Eğitilmiş ML modelleri
 ├── logs/                      # Log dosyaları
+├── pytest.ini                 # 🆕 Pytest konfigürasyonu
 ├── requirements.txt
 ├── .env.example
 └── README.md
