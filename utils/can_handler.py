@@ -194,8 +194,11 @@ class CANBusHandler:
         self.bus: Optional[can.Bus] = None
         self.is_connected = False
         
+
+
     def connect(self) -> bool:
-        """CAN bus'a bağlan"""
+        """CAN bus'a bağlan (SocketCAN veya Virtual)"""
+        # 1. Deneme: Gerçek Linux (SocketCAN)
         try:
             self.bus = can.Bus(
                 interface='socketcan',
@@ -203,12 +206,25 @@ class CANBusHandler:
                 bitrate=self.bitrate
             )
             self.is_connected = True
-            logger.info(f"✓ CAN Bus'a bağlanıldı: {self.interface}")
+            logger.info(f"✓ CAN Bus'a bağlanıldı (SocketCAN): {self.interface}")
             return True
-        except Exception as e:
-            logger.error(f"✗ CAN Bus bağlantı hatası: {e}")
-            self.is_connected = False
-            return False
+        except Exception as e_socket:
+            # 2. Deneme: Windows/WSL (Virtual) - Fallback
+            logger.warning(f"SocketCAN başlatılamadı ({e_socket}). Sanal mod deneniyor...")
+            try:
+                self.bus = can.interface.Bus(
+                    channel=self.interface,
+                    bustype='virtual'
+                )
+                self.is_connected = True
+                logger.info(f"✓ CAN Bus'a bağlanıldı (Virtual Mod): {self.interface}")
+                return True
+            except Exception as e_virtual:
+                # İkisi de başarısız olursa
+                logger.error(f"✗ CAN Bus bağlantı hatası (Virtual da başarısız): {e_virtual}")
+                self.is_connected = False
+                return False
+
     
     def disconnect(self) -> None:
         """CAN bus bağlantısını kes"""

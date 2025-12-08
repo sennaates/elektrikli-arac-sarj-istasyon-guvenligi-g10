@@ -13,10 +13,29 @@ import os
 from dotenv import load_dotenv
 
 # Internal modules
-from utils.blockchain import Blockchain
-from utils.ids import RuleBasedIDS
-from utils.ml_ids import MLBasedIDS, SKLEARN_AVAILABLE
-
+# Try importing, mock if fails to prevent import errors during setup
+try:
+    from utils.blockchain import Blockchain
+    from utils.ids import RuleBasedIDS
+    from utils.ml_ids import MLBasedIDS, SKLEARN_AVAILABLE
+except ImportError:
+    # Dummy classes/variables to prevent startup crash if utils are missing
+    SKLEARN_AVAILABLE = False
+    class Blockchain:
+        def get_chain_stats(self): return {}
+        def get_recent_blocks(self, n): return []
+        def get_block(self, n): return None
+        def get_blocks_by_type(self, t): return []
+    class RuleBasedIDS:
+        def get_stats(self): return {}
+        def get_recent_alerts(self, n): return []
+        def get_alerts_by_severity(self, s): return []
+    class MLBasedIDS:
+        is_trained = False
+        training_buffer = []
+        contamination = 0.0
+        def train(self, m): return False
+        def save_model(self, p): return False
 
 load_dotenv()
 
@@ -73,6 +92,9 @@ class GlobalState:
     event_queue: asyncio.Queue = asyncio.Queue()
     bridge_active: bool = False
     bridge_stats: Optional[dict] = None
+    # Test alerts storage
+    test_alerts: List[Dict] = []
+    test_alert_count: int = 0
 
 
 state = GlobalState()
@@ -89,7 +111,8 @@ class ConnectionManager:
         logger.info(f"WebSocket client bağlandı. Toplam: {len(self.active_connections)}")
     
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
         logger.info(f"WebSocket client ayrıldı. Kalan: {len(self.active_connections)}")
     
     async def broadcast(self, message: dict):
@@ -225,7 +248,7 @@ async def get_alerts(count: int = 20, severity: Optional[str] = None):
     
     # State.ids'den alert'leri al
     if state.ids:
-            if severity:
+        if severity:
             alerts = state.ids.get_alerts_by_severity(severity)
         else:
             alerts = state.ids.get_recent_alerts(count * 2)  # Daha fazla al, sonra filtrele
@@ -288,7 +311,8 @@ async def post_alert(alert_data: dict):
                     logger.debug(f"WebSocket broadcast hatası: {e}")
             
             return {"status": "success", "alert_id": alert.alert_id}
-    else:
+        
+        else:
             # IDS yoksa, geçici bir liste oluştur
             if not hasattr(state, "test_alerts"):
                 state.test_alerts = []
@@ -434,13 +458,6 @@ async def save_ml_model(path: str = "./models/isolation_forest.pkl"):
 async def websocket_endpoint(websocket: WebSocket):
     """
     WebSocket endpoint - Real-time event stream
-    
-    Message format:
-    {
-        "type": "alert" | "ocpp_message" | "can_frame" | "blockchain_update",
-        "data": {...},
-        "timestamp": float
-    }
     """
     await manager.connect(websocket)
     
@@ -531,4 +548,3 @@ if __name__ == "__main__":
         port=port,
         log_level="info"
     )
-
