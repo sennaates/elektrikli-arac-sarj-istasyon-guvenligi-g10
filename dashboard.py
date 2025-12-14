@@ -405,6 +405,28 @@ stats = fetch_api("/api/stats")
 if stats is not None:
     if not stats:
         st.info("ℹ️ Bridge henüz başlatılmamış. Veriler görünmeyecek.")
+        
+        # Demo data butonu
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button("🎭 Demo Verileri Oluştur", use_container_width=True, type="primary"):
+                with st.spinner("Demo verileri oluşturuluyor..."):
+                    try:
+                        import subprocess
+                        result = subprocess.run(
+                            ["python3", "demo_data.py"], 
+                            capture_output=True, 
+                            text=True, 
+                            cwd="."
+                        )
+                        if result.returncode == 0:
+                            st.success("✅ Demo verileri başarıyla oluşturuldu!")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Demo verileri oluşturulamadı: {result.stderr}")
+                    except Exception as e:
+                        st.error(f"❌ Hata: {e}")
+        
         st.markdown("---")
     
     # Modern KPI Cards
@@ -413,7 +435,13 @@ if stats is not None:
     with col1:
         blockchain_stats = stats.get("blockchain", {})
         total_blocks = blockchain_stats.get("total_blocks", 0)
-        st.markdown(create_metric_card("Toplam Blok", total_blocks, icon="📦"), unsafe_allow_html=True)
+        # Eğer blockchain stats yoksa demo değer göster
+        if total_blocks == 0 and not blockchain_stats:
+            total_blocks = "N/A"
+            delta = "Blockchain başlatılmamış"
+        else:
+            delta = None
+        st.markdown(create_metric_card("Toplam Blok", total_blocks, delta=delta, icon="📦"), unsafe_allow_html=True)
     
     with col2:
         ids_stats = stats.get("ids", {})
@@ -434,8 +462,13 @@ if stats is not None:
     with col4:
         ml_stats = stats.get("ml", {})
         ml_trained = ml_stats.get("is_trained", False)
-        ml_status = "✅ Aktif" if ml_trained else "⚠️ Eğitilmemiş"
-        st.markdown(create_metric_card("ML-IDS", ml_status, icon="🤖"), unsafe_allow_html=True)
+        if not ml_stats:
+            ml_status = "⚠️ Başlatılmamış"
+            delta = "ML-IDS devre dışı"
+        else:
+            ml_status = "✅ Aktif" if ml_trained else "⚠️ Eğitilmemiş"
+            delta = None
+        st.markdown(create_metric_card("ML-IDS", ml_status, delta=delta, icon="🤖"), unsafe_allow_html=True)
     
     st.markdown("<br>", unsafe_allow_html=True)
     
