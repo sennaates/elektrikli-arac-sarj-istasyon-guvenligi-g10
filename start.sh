@@ -378,6 +378,13 @@ if [ "$START_CSMS" = true ]; then
 fi
 
 echo ""
+
+# Demo data oluştur
+echo -e "${BLUE}🎭 Demo Verileri Oluşturuluyor${NC}"
+echo "=========================="
+python3 demo_data.py
+echo ""
+
 echo -e "${GREEN}✨ Sistem hazır! Tarayıcınızda http://localhost:8501 adresini açın.${NC}"
 echo ""
 
