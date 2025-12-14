@@ -317,15 +317,22 @@ def create_metric_card(label: str, value, delta=None, icon="📊"):
     </div>
     """
 
-# Modern Header
-st.markdown("""
+# Kullanıcı verilerine göre özelleştirme
+PROJECT_NAME = "Elektrikli Araç Şarj İstasyonu Güvenlik Sistemi"
+PROJECT_DESCRIPTION = "Blockchain-Secured OCPP-to-CAN Bridge | Real-Time Monitoring | ML-Powered IDS"
+
+# Modern Header - Özelleştirilmiş
+st.markdown(f"""
 <div class="main-header">
     <h1 style="margin: 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 2.5rem; font-weight: 800;">
-        🔐 Secure OCPP-to-CAN Bridge
+        🔐 {PROJECT_NAME}
     </h1>
     <p style="margin: 0.5rem 0 0 0; color: #6c757d; font-size: 1.1rem;">
-        Real-Time Monitoring | Blockchain-Secured | ML-Powered IDS
+        {PROJECT_DESCRIPTION}
     </p>
+    <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(102, 126, 234, 0.2);">
+        <span style="color: #667eea; font-size: 0.9rem; font-weight: 600;">📊 BSG Proje Çıktıları | ⛓️ Blockchain Güvenlik | 🤖 ML-IDS</span>
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -352,6 +359,7 @@ with st.sidebar:
     show_blockchain = st.checkbox("⛓️ Blockchain", value=True)
     show_traffic = st.checkbox("📡 Trafik", value=True)
     show_ml = st.checkbox("🤖 ML-IDS", value=True)
+    show_bsg = st.checkbox("🔋 BSG Proje Çıktıları", value=True)
     
     st.markdown("---")
     
@@ -369,6 +377,24 @@ with st.sidebar:
             <div style="color: #ef4444; font-weight: 700; font-size: 1.1rem;">❌ Sistem Erişilemez</div>
         </div>
         """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # BSG Proje Bilgileri
+    st.markdown("""
+    <div style="background: rgba(255, 255, 255, 0.1); padding: 1rem; border-radius: 12px; margin-top: 1rem;">
+        <h4 style="color: white; margin: 0 0 0.5rem 0;">📋 Proje Bilgileri</h4>
+        <p style="color: rgba(255, 255, 255, 0.9); margin: 0.25rem 0; font-size: 0.9rem;">
+            <strong>Proje:</strong> Elektrikli Araç Şarj İstasyonu Güvenlik Sistemi
+        </p>
+        <p style="color: rgba(255, 255, 255, 0.9); margin: 0.25rem 0; font-size: 0.9rem;">
+            <strong>BSG Modülü:</strong> src/bsg/
+        </p>
+        <p style="color: rgba(255, 255, 255, 0.9); margin: 0.25rem 0; font-size: 0.9rem;">
+            <strong>API:</strong> {API_URL}
+        </p>
+    </div>
+    """.format(API_URL=API_URL), unsafe_allow_html=True)
     
     st.markdown("---")
     st.caption(f"🌐 API: {API_URL}")
@@ -719,6 +745,151 @@ if stats is not None:
                             st.error("❌ Model eğitimi başarısız")
         else:
             st.warning("⚠️ ML-IDS devre dışı veya mevcut değil")
+    
+    # BSG Proje Çıktıları Section
+    if show_bsg:
+        st.markdown('<div class="section-header">🔋 BSG Proje Çıktıları</div>', unsafe_allow_html=True)
+        
+        # BSG İstatistikleri
+        bsg_stats = fetch_api("/api/bsg/statistics")
+        
+        if bsg_stats:
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                connected_cps = bsg_stats.get("connected_charge_points", 0)
+                st.markdown(create_metric_card("Bağlı Şarj İstasyonu", connected_cps, icon="🔌"), unsafe_allow_html=True)
+            
+            with col2:
+                total_txs = bsg_stats.get("total_transactions", 0)
+                st.markdown(create_metric_card("Toplam Transaction", total_txs, icon="📝"), unsafe_allow_html=True)
+            
+            with col3:
+                active_txs = bsg_stats.get("active_transactions", 0)
+                st.markdown(create_metric_card("Aktif Transaction", active_txs, icon="⚡"), unsafe_allow_html=True)
+            
+            with col4:
+                inactive_txs = bsg_stats.get("inactive_transactions", 0)
+                st.markdown(create_metric_card("Tamamlanan Transaction", inactive_txs, icon="✅"), unsafe_allow_html=True)
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+        
+        # ChargePoint Listesi
+        st.markdown("### 🔌 Bağlı Şarj İstasyonları")
+        charge_points = fetch_api("/api/bsg/chargepoints")
+        
+        if charge_points and len(charge_points) > 0:
+            cp_data = []
+            for cp in charge_points:
+                cp_data.append({
+                    "Charge Point ID": cp.get("charge_point_id", "N/A"),
+                    "Durum": "🟢 Bağlı" if cp.get("connected", False) or cp.get("is_connected", False) else "🔴 Bağlı Değil",
+                    "Bağlantı": "Aktif" if cp.get("connected", False) or cp.get("is_connected", False) else "Pasif"
+                })
+            
+            if cp_data:
+                df_cps = pd.DataFrame(cp_data)
+                st.dataframe(df_cps, use_container_width=True, hide_index=True)
+        else:
+            st.markdown("""
+            <div class="empty-state">
+                <div style="font-size: 3rem; margin-bottom: 0.5rem;">🔌</div>
+                <p style="color: #6c757d;">Henüz bağlı şarj istasyonu yok</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Transaction Listesi
+        st.markdown("### 📝 Transaction Geçmişi")
+        transactions = fetch_api("/api/bsg/transactions")
+        
+        if transactions and len(transactions) > 0:
+            # Son 20 transaction'ı göster
+            recent_transactions = transactions[:20]
+            
+            tx_data = []
+            for tx in recent_transactions:
+                tx_id = tx.get("transaction_id", "N/A")
+                cp_id = tx.get("charge_point_id", "N/A")
+                reservation_id = tx.get("reservation_id", "N/A")
+                id_tag = tx.get("id_tag", "N/A")
+                start_time = tx.get("start_time", "N/A")
+                is_active = tx.get("active", False)
+                
+                tx_data.append({
+                    "Transaction ID": tx_id,
+                    "Charge Point": cp_id,
+                    "Reservation ID": reservation_id if reservation_id != "N/A" else str(reservation_id),
+                    "ID Tag": id_tag,
+                    "Başlangıç": start_time[:19] if isinstance(start_time, str) and len(start_time) > 19 else start_time,
+                    "Durum": "🟢 Aktif" if is_active else "✅ Tamamlandı"
+                })
+            
+            if tx_data:
+                df_txs = pd.DataFrame(tx_data)
+                st.dataframe(df_txs, use_container_width=True, hide_index=True)
+                
+                # Transaction durumu grafiği
+                if len(tx_data) > 0:
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        active_count = sum(1 for tx in tx_data if "Aktif" in tx["Durum"])
+                        inactive_count = len(tx_data) - active_count
+                        
+                        fig = go.Figure(data=[go.Pie(
+                            labels=["Aktif", "Tamamlandı"],
+                            values=[active_count, inactive_count],
+                            hole=0.4,
+                            marker=dict(colors=['#10b981', '#6b7280'])
+                        )])
+                        fig.update_layout(
+                            title=dict(text="Transaction Durumu", font=dict(size=16, color="#1f2937")),
+                            height=300,
+                            showlegend=True,
+                            paper_bgcolor='rgba(0,0,0,0)',
+                            plot_bgcolor='rgba(0,0,0,0)',
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    with col2:
+                        # Charge Point'e göre transaction dağılımı
+                        cp_counts = {}
+                        for tx in tx_data:
+                            cp = tx["Charge Point"]
+                            cp_counts[cp] = cp_counts.get(cp, 0) + 1
+                        
+                        if cp_counts:
+                            df_cp_dist = pd.DataFrame([
+                                {"Charge Point": k, "Transaction Sayısı": v}
+                                for k, v in cp_counts.items()
+                            ])
+                            fig = px.bar(
+                                df_cp_dist,
+                                x="Charge Point",
+                                y="Transaction Sayısı",
+                                color="Transaction Sayısı",
+                                color_continuous_scale="viridis",
+                                title="Charge Point Transaction Dağılımı"
+                            )
+                            fig.update_layout(
+                                paper_bgcolor='rgba(0,0,0,0)',
+                                plot_bgcolor='rgba(0,0,0,0)',
+                                font=dict(color="#1f2937")
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Transaction verisi bulunamadı")
+        else:
+            st.markdown("""
+            <div class="empty-state">
+                <div style="font-size: 3rem; margin-bottom: 0.5rem;">📝</div>
+                <p style="color: #6c757d;">Henüz transaction kaydı yok</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown("<br>", unsafe_allow_html=True)
 
 else:
     st.error("❌ API'ye bağlanılamıyor!")
@@ -730,9 +901,19 @@ if auto_refresh:
     time.sleep(refresh_interval)
     st.rerun()
 
-# Modern Footer
-st.markdown("""
+# Modern Footer - Özelleştirilmiş
+st.markdown(f"""
 <div class="footer">
-    🔐 Secure OCPP-CAN Bridge | University IoT Security Project | 2024
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+        <div>
+            <strong>🔐 {PROJECT_NAME}</strong>
+        </div>
+        <div style="margin-top: 0.5rem; color: #6b7280; font-size: 0.85rem;">
+            BSG Proje Çıktıları | Blockchain Güvenlik | ML-Powered IDS | 2024
+        </div>
+    </div>
+    <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(102, 126, 234, 0.1); text-align: center; color: #9ca3af; font-size: 0.8rem;">
+        <span>📊 Real-Time Monitoring Dashboard | ⛓️ Blockchain-Secured | 🤖 ML-IDS</span>
+    </div>
 </div>
 """, unsafe_allow_html=True)

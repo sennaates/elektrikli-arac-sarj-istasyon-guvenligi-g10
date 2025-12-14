@@ -11,6 +11,14 @@ from src.bsg.utils.logging import setup_logger
 
 logger = setup_logger(__name__)
 
+# API senkronizasyonu için (opsiyonel)
+try:
+    from src.bsg.utils.api_sync import BSGAPISync
+    API_SYNC_AVAILABLE = True
+except ImportError:
+    API_SYNC_AVAILABLE = False
+    logger.debug("API sync modülü mevcut değil, senkronizasyon devre dışı")
+
 class CSMSimulator:
     """
     Central System (CSMS) Simulator.
@@ -19,7 +27,8 @@ class CSMSimulator:
         secure_mode (bool): If True, enables security checks to prevent duplicate bookings.
     """
     
-    def __init__(self, host: str = "0.0.0.0", port: int = 9024, secure_mode: bool = False):
+    def __init__(self, host: str = "0.0.0.0", port: int = 9024, secure_mode: bool = False, 
+                 api_sync: bool = False, api_url: str = "http://127.0.0.1:8000"):
         self.host = host
         self.port = port
         self.secure_mode = secure_mode
@@ -28,6 +37,12 @@ class CSMSimulator:
         # Stores active transactions: list of dicts
         self.active_transactions: List[Dict] = []
         self.is_running = False
+        # API senkronizasyonu
+        self.api_sync_enabled = api_sync and API_SYNC_AVAILABLE
+        self.api_sync = None
+        if self.api_sync_enabled:
+            self.api_sync = BSGAPISync(api_url)
+            logger.info(f"API senkronizasyonu etkin: {api_url}")
         
     async def start(self):
         """Starts the CSMS WebSocket server."""
@@ -58,6 +73,13 @@ class CSMSimulator:
         cp = ChargePointHandler(charge_point_id, websocket, self)
         self.connected_charge_points[charge_point_id] = cp
         
+        # API'ye senkronize et (eğer etkinse)
+        if self.api_sync_enabled and self.api_sync:
+            try:
+                self.api_sync.sync_csms_data(self)
+            except Exception as e:
+                logger.debug(f"API senkronizasyonu hatası (non-critical): {e}")
+        
         try:
             await cp.start()
         except websockets.exceptions.ConnectionClosed:
@@ -66,6 +88,12 @@ class CSMSimulator:
             logger.error(f"❌ Connection error ({charge_point_id}): {e}")
         finally:
             self.connected_charge_points.pop(charge_point_id, None)
+            # API'ye senkronize et (bağlantı kapandığında)
+            if self.api_sync_enabled and self.api_sync:
+                try:
+                    self.api_sync.sync_csms_data(self)
+                except Exception as e:
+                    logger.debug(f"API senkronizasyonu hatası (non-critical): {e}")
 
     def is_reservation_active(self, reservation_id: int) -> bool:
         """Checks if a reservation ID is currently used in an active transaction."""
@@ -98,6 +126,13 @@ class CSMSimulator:
             )
         else:
             logger.info(f"Transaction registered: {transaction_id}")
+        
+        # API'ye senkronize et (eğer etkinse)
+        if self.api_sync_enabled and self.api_sync:
+            try:
+                self.api_sync.sync_csms_data(self)
+            except Exception as e:
+                logger.debug(f"API senkronizasyonu hatası (non-critical): {e}")
 
     def get_active_transactions_by_reservation(self, reservation_id_str: str) -> List[Dict]:
         """Helper to find transactions by reservation ID (string input from test)."""

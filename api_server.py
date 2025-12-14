@@ -4,21 +4,44 @@ FastAPI Server - Dashboard için REST API ve WebSocket
 import asyncio
 import time
 from typing import List, Dict, Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-from loguru import logger
+
+# FastAPI imports with error handling
+try:
+    from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.responses import JSONResponse
+    from pydantic import BaseModel
+except ImportError as e:
+    print(f"❌ FastAPI kütüphaneleri yüklü değil: {e}")
+    print("Çözüm: pip install fastapi uvicorn pydantic")
+    exit(1)
+
+try:
+    from loguru import logger
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
+    logging.basicConfig(level=logging.INFO)
+
 import os
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    logger.warning("python-dotenv yüklü değil, .env dosyası okunmayacak")
 
-# Internal modules
-from utils.blockchain import Blockchain
-from utils.ids import RuleBasedIDS
-from utils.ml_ids import MLBasedIDS, SKLEARN_AVAILABLE
-
-
-load_dotenv()
+# Internal modules with error handling
+try:
+    from utils.blockchain import Blockchain
+    from utils.ids import RuleBasedIDS
+    from utils.ml_ids import MLBasedIDS, SKLEARN_AVAILABLE
+except ImportError as e:
+    logger.warning(f"Internal modüller yüklenemedi: {e}")
+    # Dummy classes for development
+    class Blockchain: pass
+    class RuleBasedIDS: pass
+    class MLBasedIDS: pass
+    SKLEARN_AVAILABLE = False
 
 
 # Pydantic models
@@ -73,6 +96,13 @@ class GlobalState:
     event_queue: asyncio.Queue = asyncio.Queue()
     bridge_active: bool = False
     bridge_stats: Optional[dict] = None
+    # BSG proje çıktıları için
+    csms_instance: Optional[object] = None  # CSMSimulator instance
+    bsg_outputs: Dict = {
+        "transactions": [],
+        "charge_points": [],
+        "statistics": {}
+    }
 
 
 state = GlobalState()
@@ -225,7 +255,7 @@ async def get_alerts(count: int = 20, severity: Optional[str] = None):
     
     # State.ids'den alert'leri al
     if state.ids:
-            if severity:
+        if severity:
             alerts = state.ids.get_alerts_by_severity(severity)
         else:
             alerts = state.ids.get_recent_alerts(count * 2)  # Daha fazla al, sonra filtrele
@@ -288,18 +318,17 @@ async def post_alert(alert_data: dict):
                     logger.debug(f"WebSocket broadcast hatası: {e}")
             
             return {"status": "success", "alert_id": alert.alert_id}
-    else:
+        else:
             # IDS yoksa, geçici bir liste oluştur
             if not hasattr(state, "test_alerts"):
                 state.test_alerts = []
             
             # Timestamp ISO formatını ekle
             if "timestamp_iso" not in alert_data and "timestamp" in alert_data:
-                import time as time_module
-                alert_data["timestamp_iso"] = time_module.strftime(
-                    "%Y-%m-%d %H:%M:%S",
-                    time_module.localtime(alert_data["timestamp"])
-                )
+                from datetime import datetime
+                alert_data["timestamp_iso"] = datetime.fromtimestamp(
+                    alert_data["timestamp"]
+                ).strftime("%Y-%m-%d %H:%M:%S")
             
             state.test_alerts.append(alert_data)
             
@@ -428,6 +457,119 @@ async def save_ml_model(path: str = "./models/isolation_forest.pkl"):
         return JSONResponse({"status": "failed"}, status_code=400)
 
 
+# BSG Proje Çıktıları Endpoint'leri
+
+@app.get("/api/bsg/transactions")
+async def get_bsg_transactions():
+    """BSG CSMS transaction'larını getir"""
+    transactions = []
+    
+    # CSMS instance'dan transaction'ları al
+    if state.csms_instance:
+        try:
+            if hasattr(state.csms_instance, 'active_transactions'):
+                transactions = state.csms_instance.active_transactions.copy()
+        except Exception as e:
+            logger.error(f"CSMS transaction'ları alınırken hata: {e}")
+    
+    # Eğer state'de kayıtlı transaction'lar varsa onları da ekle
+    if state.bsg_outputs.get("transactions"):
+        transactions.extend(state.bsg_outputs["transactions"])
+    
+    # Duplikasyonları kaldır (transaction_id'ye göre)
+    seen = set()
+    unique_transactions = []
+    for tx in transactions:
+        tx_id = tx.get("transaction_id")
+        if tx_id and tx_id not in seen:
+            seen.add(tx_id)
+            unique_transactions.append(tx)
+    
+    return unique_transactions
+
+
+@app.get("/api/bsg/chargepoints")
+async def get_bsg_chargepoints():
+    """Bağlı ChargePoint'leri getir"""
+    charge_points = []
+    
+    # CSMS instance'dan charge point'leri al
+    if state.csms_instance:
+        try:
+            if hasattr(state.csms_instance, 'connected_charge_points'):
+                for cp_id, cp_handler in state.csms_instance.connected_charge_points.items():
+                    charge_points.append({
+                        "charge_point_id": cp_id,
+                        "connected": True,
+                        "is_connected": getattr(cp_handler, 'is_connected', True) if hasattr(cp_handler, 'is_connected') else True
+                    })
+        except Exception as e:
+            logger.error(f"ChargePoint'ler alınırken hata: {e}")
+    
+    # Eğer state'de kayıtlı charge point'ler varsa onları da ekle
+    if state.bsg_outputs.get("charge_points"):
+        charge_points.extend(state.bsg_outputs["charge_points"])
+    
+    return charge_points
+
+
+@app.get("/api/bsg/statistics")
+async def get_bsg_statistics():
+    """BSG simülasyon istatistiklerini getir"""
+    stats = {
+        "connected_charge_points": 0,
+        "total_transactions": 0,
+        "active_transactions": 0,
+        "inactive_transactions": 0
+    }
+    
+    # CSMS instance'dan istatistikleri al
+    if state.csms_instance:
+        try:
+            if hasattr(state.csms_instance, 'get_statistics'):
+                csms_stats = state.csms_instance.get_statistics()
+                stats.update(csms_stats)
+            elif hasattr(state.csms_instance, 'active_transactions'):
+                transactions = state.csms_instance.active_transactions
+                stats["total_transactions"] = len(transactions)
+                stats["active_transactions"] = len([tx for tx in transactions if tx.get("active", False)])
+                stats["inactive_transactions"] = stats["total_transactions"] - stats["active_transactions"]
+            if hasattr(state.csms_instance, 'connected_charge_points'):
+                stats["connected_charge_points"] = len(state.csms_instance.connected_charge_points)
+        except Exception as e:
+            logger.error(f"BSG istatistikleri alınırken hata: {e}")
+    
+    # State'deki istatistikleri de ekle
+    if state.bsg_outputs.get("statistics"):
+        stats.update(state.bsg_outputs["statistics"])
+    
+    return stats
+
+
+@app.post("/api/bsg/register")
+async def register_bsg_outputs(bsg_data: dict):
+    """BSG proje çıktılarını API server'a kaydet"""
+    try:
+        if "transactions" in bsg_data:
+            state.bsg_outputs["transactions"] = bsg_data["transactions"]
+        if "charge_points" in bsg_data:
+            state.bsg_outputs["charge_points"] = bsg_data["charge_points"]
+        if "statistics" in bsg_data:
+            state.bsg_outputs["statistics"] = bsg_data["statistics"]
+        
+        logger.info("BSG proje çıktıları API'ye kaydedildi")
+        return {"status": "success", "timestamp": time.time()}
+    except Exception as e:
+        logger.error(f"BSG çıktıları kaydedilirken hata: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+def inject_csms_instance(csms_instance):
+    """CSMS instance'ını global state'e ekle"""
+    state.csms_instance = csms_instance
+    logger.info("CSMS instance API'ye enjekte edildi")
+
+
 # WebSocket endpoint (Real-time updates)
 
 @app.websocket("/ws")
@@ -518,17 +660,25 @@ def inject_bridge_state(blockchain, ids, ml_ids, event_queue):
 
 
 if __name__ == "__main__":
-    import uvicorn
+    try:
+        import uvicorn
+    except ImportError:
+        logger.error("❌ uvicorn yüklü değil. Çözüm: pip install uvicorn")
+        exit(1)
     
     host = os.getenv("API_HOST", "0.0.0.0")
     port = int(os.getenv("API_PORT", 8000))
     
     logger.info(f"API Server başlatılıyor: http://{host}:{port}")
     
-    uvicorn.run(
-        app,
-        host=host,
-        port=port,
-        log_level="info"
-    )
+    try:
+        uvicorn.run(
+            app,
+            host=host,
+            port=port,
+            log_level="info"
+        )
+    except Exception as e:
+        logger.error(f"❌ Server başlatılamadı: {e}")
+        logger.info("Çözüm: pip install fastapi uvicorn pydantic loguru python-dotenv")
 
