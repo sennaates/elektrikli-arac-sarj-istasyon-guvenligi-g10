@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  bsg-test:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: bsg-test
+    network_mode: host  # Host network for CAN bus access
+    privileged: true    # Required for CAN bus operations
+    volumes:
+      - ..:/app
+      - /dev:/dev        # Device access
+    cap_add:
+      - NET_ADMIN       # Network administration for vcan0
+      - SYS_MODULE      # Module loading
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: >
+      bash -c "
+        setup_vcan.sh &&
+        cd /app &&
+        python3 tests/scenario_clac_sco.py
+      "
+
