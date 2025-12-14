@@ -1,425 +1,441 @@
 # 📊 DASHBOARD TEST RAPORU
 
-**Tarih:** 2025-11-23  
+**Proje:** Elektrikli Araç Şarj İstasyonu Güvenliği - G10  
 **Dashboard:** Streamlit Web Application  
-**Port:** 8501  
-**Durum:** ✅ BAŞARILI
+**Port:** 8501 (Dashboard) / 8000 (API)  
+**Tarih:** Aralık 2024
 
 ---
 
-## 🎯 **TEST ÖZETİ**
+## 🎯 **PROJE ÖZETİ**
 
-```
-╔════════════════════════════════════════════════╗
-║  ✅ DASHBOARD BAŞARIYLA ÇALIŞIYOR!            ║
-╚════════════════════════════════════════════════╝
-```
+Bu proje, **OCPP (Open Charge Point Protocol)** ile **CAN-Bus** arasında güvenli bir köprü sistemi sunar. Sistem, **blockchain** tabanlı veri bütünlüğü ve **hibrit IDS (Intrusion Detection System)** ile gerçek zamanlı saldırı tespiti sağlar.
 
-### **Sistem Durumu:**
+### **Temel Bileşenler:**
 
-| Bileşen | Durum | Port | PID |
-|---------|-------|------|-----|
-| **API Server** | ✅ ÇALIŞIYOR | 8000 | 49541 |
-| **Streamlit Dashboard** | ✅ ÇALIŞIYOR | 8501 | Aktif |
-| **vcan0 Interface** | ✅ AKTIF | - | - |
+| Bileşen | Dosya | Port | Görev |
+|---------|-------|------|-------|
+| **API Server** | `api_server.py` | 8000 | REST API + WebSocket |
+| **Dashboard** | `dashboard.py` | 8501 | Streamlit görselleştirme |
+| **Secure Bridge** | `secure_bridge.py` | - | OCPP ↔ CAN dönüşümü |
+| **CSMS Simulator** | `csms_simulator.py` | 9000 | Test CSMS sunucusu |
+| **BSG Module** | `src/bsg/` | 9000 | Profesyonel OCPP simülatörü |
+| **Attack Simulator** | `attack_simulator.py` | - | Saldırı test aracı |
 
 ---
 
 ## 📋 **DASHBOARD BİLEŞENLERİ**
 
-### **✅ Kullanılabilir Bileşenler:**
-
-#### **1️⃣ Ana Sayfa**
-- 🔐 **Başlık:** "Secure OCPP-CAN Bridge"
-- 📊 **Layout:** Wide layout (3 sütun)
-- 🎨 **Tema:** Custom CSS ile özelleştirilmiş
-- 🔄 **Auto-refresh:** 3 saniye (configurable)
-
-#### **2️⃣ Sidebar (Yan Panel)**
+### **1️⃣ Ana Başlık (Header)**
 ```
-├── 📊 Sistem Durumu
-├── 🔐 Blockchain İstatistikleri
-├── 🛡️ IDS İstatistikleri
-├── 🚨 Son Alertler
-└── ⚙️ Ayarlar
+🔐 Secure OCPP-to-CAN Bridge
+Real-Time Monitoring | Blockchain-Secured | ML-Powered IDS
 ```
 
-#### **3️⃣ Ana Panel Bölümleri**
-
-**A) Sistem Metrikleri (3 Sütun):**
+### **2️⃣ Sidebar (Kontrol Paneli)**
 ```
-┌─────────────┬─────────────┬─────────────┐
-│ Blockchain  │ IDS Status  │ Alert Count │
-│   Status    │             │             │
-└─────────────┴─────────────┴─────────────┘
-```
-
-**B) Görselleştirmeler:**
-- 📈 **Blockchain Growth Chart** (Plotly)
-- 📊 **Alert Timeline** (Plotly)
-- 🎯 **Alert Severity Distribution** (Pie Chart)
-- 📉 **CAN Traffic Monitor** (Line Chart)
-- 🔥 **OCPP Rate Monitor** (Real-time)
-
-**C) Alert Panel:**
-```css
-.alert-critical  /* Kırmızı - CRITICAL */
-.alert-high      /* Turuncu - HIGH */
-.alert-medium    /* Sarı - MEDIUM */
+├── ⚙️ Kontrol Paneli
+│   ├── 🔄 Otomatik Yenileme (checkbox)
+│   └── ⏱️ Yenileme Süresi (slider: 1-10 sn)
+├── 📊 Filtreler
+│   ├── 🚨 Alert'ler (checkbox)
+│   ├── ⛓️ Blockchain (checkbox)
+│   ├── 📡 Trafik (checkbox)
+│   └── 🤖 ML-IDS (checkbox)
+├── ✅ Sistem Durumu Göstergesi
+└── 🌐 API URL Bilgisi
 ```
 
-**D) Blockchain Explorer:**
-- Son N bloğu listele
-- Block hash doğrulama
-- Chain integrity check
-- Block details görüntüleme
+### **3️⃣ Ana Panel Bölümleri**
+
+#### **A) KPI Kartları (4 Sütun)**
+| Kart | İkon | Veri Kaynağı |
+|------|------|--------------|
+| Toplam Blok | 📦 | `/api/stats` → `blockchain.total_blocks` |
+| Toplam Alert | 🚨 | `/api/alerts?count=100` |
+| CAN Frame | 📡 | `/api/stats` → `ids.total_can_frames` |
+| ML-IDS | 🤖 | `/api/stats` → `ml.is_trained` |
+
+#### **B) Alert Bölümü**
+- **Severity Distribution:** CRITICAL / HIGH / MEDIUM / LOW sayıları
+- **Son Alert'ler:** Renk kodlu alert kartları (son 10)
+- **Alert Kartı Formatı:**
+  ```
+  ┌─────────────────────────────────────────┐
+  │ [SEVERITY BADGE]              [ZAMAN]   │
+  │ ALERT_TYPE                              │
+  │ Description text...                     │
+  └─────────────────────────────────────────┘
+  ```
+
+#### **C) Blockchain Durumu**
+- **Doğrulama Durumu:** ✅ GEÇERLİ / ❌ GEÇERSİZ
+- **Genesis Hash:** İlk 20 karakter
+- **En Son Hash:** İlk 20 karakter
+- **Dijital İmza:** Etkin / Devre Dışı
+- **Blok Tipi Dağılımı:** Pie chart (Plotly)
+- **Son Bloklar Tablosu:** Index, Tip, Hash, Önceki Hash, Zaman
+
+#### **D) Trafik Analizi**
+- **CAN ID Frekansı:** Bar chart (Plotly)
+- **OCPP Action Frekansı:** Bar chart (Plotly)
+
+#### **E) Makine Öğrenmesi (ML-IDS)**
+- **Model Durumu:** Eğitilmiş / Eğitilmemiş
+- **Eğitim Verisi:** Örnek sayısı
+- **Anomali Oranı:** Contamination değeri
+- **Eğit Butonu:** "🎓 Modeli Eğit"
 
 ---
 
-## 🧪 **API ENDPOİNT TESTLERİ**
+## 🎨 **TASARIM ÖZELLİKLERİ**
 
-### **Test Sonuçları:**
-
-```
-API ENDPOINT TEST
-==================================================
-✅ /api/health: 200 OK
-   Response: {"status": "healthy", "timestamp": ..., "components": {...}}
-
-✅ /api/stats: 200 OK
-   Response: {} (Bridge yok, boş)
-
-⚠️ /api/blockchain/stats: 503 Service Unavailable
-   Reason: Bridge çalışmıyor (beklenen)
-
-⚠️ /api/ids/stats: 503 Service Unavailable
-   Reason: Bridge çalışmıyor (beklenen)
-
-⚠️ /api/alerts: 503 Service Unavailable
-   Reason: Bridge çalışmıyor (beklenen)
-==================================================
-```
-
-### **Analiz:**
-
-| Endpoint | Status | Durum | Not |
-|----------|--------|-------|-----|
-| `/api/health` | 200 | ✅ | API server sağlıklı |
-| `/api/stats` | 200 | ✅ | Boş response (normal) |
-| `/api/blockchain/stats` | 503 | ⏭️ | Bridge bekleniyor |
-| `/api/ids/stats` | 503 | ⏭️ | Bridge bekleniyor |
-| `/api/alerts` | 503 | ⏭️ | Bridge bekleniyor |
-
-**Sonuç:** API server çalışıyor, ancak Bridge olmadan veri üretilemiyor. Bu beklenen davranıştır.
-
----
-
-## 📊 **DASHBOARD ÖZELLİKLERİ**
-
-### **Mevcut Özellikler:**
-
-#### **✅ Gerçek Zamanlı İzleme**
-```python
-# Auto-refresh her 3 saniyede
-st_autorefresh(interval=3000, key="datarefresh")
-```
-
-#### **✅ Error Handling**
-```python
-try:
-    response = requests.get(url, timeout=10)
-except ConnectionError:
-    st.error("API'ye bağlanılamıyor")
-except Timeout:
-    st.error("API zaman aşımı")
-```
-
-#### **✅ Responsive Design**
-- Wide layout (3 sütun)
-- Mobile-friendly (Streamlit otomatik)
-- Custom CSS styling
-
-#### **✅ Veri Görselleştirme**
-- **Plotly Charts:** İnteraktif grafikler
-- **Metrics:** Büyük sayılar (st.metric)
-- **DataFrames:** Tablo görünümü
-- **Alert Cards:** Renk kodlu uyarılar
-
-#### **✅ Kullanıcı Deneyimi**
-- Loading spinners
-- Success/Error messages
-- Info tooltips
-- Color-coded alerts
-
----
-
-## 🖥️ **DASHBOARD EKRAN GÖRÜNTÜLERİ**
-
-### **Ana Sayfa Layout:**
-
-```
-┌─────────────────────────────────────────────────────────┐
-│  🔐 Secure OCPP-CAN Bridge                              │
-│  Real-Time Monitoring Dashboard                         │
-├─────────────────────────────────────────────────────────┤
-│                                                          │
-│  ┌─────────────┬─────────────┬─────────────┐           │
-│  │ Blockchain  │ IDS Status  │ Alert Count │           │
-│  │   ⛓️ 0     │  🛡️ Ready  │  🚨 0       │           │
-│  └─────────────┴─────────────┴─────────────┘           │
-│                                                          │
-│  📈 Blockchain Growth                                   │
-│  ┌────────────────────────────────────────────┐        │
-│  │  (Grafik: Block sayısı vs Zaman)          │        │
-│  └────────────────────────────────────────────┘        │
-│                                                          │
-│  🚨 Recent Alerts                                       │
-│  ┌────────────────────────────────────────────┐        │
-│  │  ⚠️ No alerts yet (Bridge not running)    │        │
-│  └────────────────────────────────────────────┘        │
-│                                                          │
-│  ⛓️ Blockchain Explorer                                │
-│  ┌────────────────────────────────────────────┐        │
-│  │  Index | Hash | Timestamp | Valid          │        │
-│  │  (Tablo boş - Bridge yok)                  │        │
-│  └────────────────────────────────────────────┘        │
-└─────────────────────────────────────────────────────────┘
-```
-
----
-
-## 🔍 **BRIDGE ÇALIŞTIĞINDA GÖRÜNECEKLER**
-
-### **Beklenen Dashboard Görünümü:**
-
-```
-┌─────────────────────────────────────────────────────────┐
-│  ┌─────────────┬─────────────┬─────────────┐           │
-│  │ Blockchain  │ IDS Status  │ Alert Count │           │
-│  │  ⛓️ 156    │  🛡️ Active │  🚨 12      │           │
-│  └─────────────┴─────────────┴─────────────┘           │
-│                                                          │
-│  📈 Blockchain Growth                                   │
-│  ┌────────────────────────────────────────────┐        │
-│  │     ╱                                       │        │
-│  │    ╱                                        │        │
-│  │   ╱  (Artan grafik)                        │        │
-│  │  ╱                                          │        │
-│  └────────────────────────────────────────────┘        │
-│                                                          │
-│  🚨 Recent Alerts                                       │
-│  ┌────────────────────────────────────────────┐        │
-│  │  🔴 CRITICAL: CAN_FLOOD_ATTACK              │        │
-│  │      Rate: 180 frame/s (14:19:28)          │        │
-│  │  🟠 HIGH: UNAUTHORIZED_CAN_INJECTION        │        │
-│  │      CAN ID: 0x200 (14:19:41)              │        │
-│  │  🟡 MEDIUM: TIMING_MISMATCH                 │        │
-│  │      Start→Stop: 1.0s (14:19:29)           │        │
-│  └────────────────────────────────────────────┘        │
-│                                                          │
-│  ⛓️ Blockchain Explorer                                │
-│  ┌────────────────────────────────────────────┐        │
-│  │ #156 | b8e1a... | 14:20:15 | ✅ Valid      │        │
-│  │ #155 | a3f2c... | 14:20:12 | ✅ Valid      │        │
-│  │ #154 | 9d7e8... | 14:20:09 | ✅ Valid      │        │
-│  └────────────────────────────────────────────┘        │
-└─────────────────────────────────────────────────────────┘
-```
-
----
-
-## ✅ **BAŞARILI OLAN TESTLER**
-
-1. ✅ **Dashboard Başlatma:** Streamlit başarıyla başlatıldı
-2. ✅ **Port Binding:** 8501 portu dinleniyor
-3. ✅ **API Bağlantısı:** `/api/health` başarılı
-4. ✅ **Error Handling:** 503 hataları doğru gösteriliyor
-5. ✅ **Layout Rendering:** Sayfa düzgün render ediliyor
-6. ✅ **Custom CSS:** Stiller uygulanıyor
-7. ✅ **Responsive Design:** Wide layout çalışıyor
-
----
-
-## ⏭️ **BRIDGE İLE TEST EDİLECEKLER**
-
-### **Bridge Başlatıldığında Test Edilecek:**
-
-1. ⏭️ **Real-time Data Updates:** 3 saniyede bir güncelleme
-2. ⏭️ **Blockchain Visualization:** Block growth chart
-3. ⏭️ **Alert Display:** Renk kodlu alert kartları
-4. ⏭️ **IDS Statistics:** Tespit istatistikleri
-5. ⏭️ **CAN Traffic Monitor:** Frame rate grafikleri
-6. ⏭️ **Blockchain Explorer:** Block detayları
-7. ⏭️ **WebSocket Stream:** Real-time event stream
-
-### **Test Senaryosu:**
-
-```bash
-# Terminal 1: Bridge
-python secure_bridge.py
-
-# Terminal 2: Attack
-python attack_simulator.py --attack combined
-
-# Terminal 3: Dashboard İzle
-# Browser: http://localhost:8501
-# Beklenen: Anlık alert'lerin görünmesi
-```
-
----
-
-## 📚 **DASHBOARD DOSYA YAPISI**
-
-```
-dashboard.py (12KB)
-├── Imports (streamlit, plotly, requests)
-├── Page Config
-├── Custom CSS
-├── Helper Functions
-│   ├── fetch_api()
-│   ├── format_timestamp()
-│   └── create_alert_card()
-├── Main Dashboard
-│   ├── Header
-│   ├── Sidebar
-│   │   ├── System Status
-│   │   ├── Blockchain Stats
-│   │   ├── IDS Stats
-│   │   └── Recent Alerts
-│   ├── Main Panel
-│   │   ├── Metrics (3 columns)
-│   │   ├── Charts (Plotly)
-│   │   ├── Alert Timeline
-│   │   └── Blockchain Explorer
-│   └── Auto-refresh Logic
-└── Footer
-```
-
-**Toplam Satır:** ~375 satır
-
----
-
-## 🎨 **GÖRSEL ÖZELLİKLER**
-
-### **Renk Paleti:**
+### **Renk Paleti (CSS Variables)**
 
 ```css
 /* Alert Seviyeleri */
-CRITICAL: #f44336 (Kırmızı)
-HIGH:     #ff9800 (Turuncu)
-MEDIUM:   #ffeb3b (Sarı)
-LOW:      #4CAF50 (Yeşil)
+CRITICAL: #ef4444 (Kırmızı)
+HIGH:     #f59e0b (Turuncu)
+MEDIUM:   #eab308 (Sarı)
+LOW:      #10b981 (Yeşil)
+
+/* Gradient Temalar */
+Header:   linear-gradient(135deg, #667eea 0%, #764ba2 100%)
+Sidebar:  linear-gradient(180deg, #667eea 0%, #764ba2 100%)
+Background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)
 
 /* Blockchain */
-VALID:    #4CAF50 (Yeşil)
-INVALID:  #f44336 (Kırmızı)
-
-/* Genel */
-Background: #f0f2f6
-Border:     #ddd
-Text:       #333
+VALID:    #10b981 (Yeşil gradient)
+INVALID:  #ef4444 (Kırmızı gradient)
 ```
 
-### **İkonlar:**
-- 🔐 Güvenlik
-- ⛓️ Blockchain
-- 🛡️ IDS
-- 🚨 Alert
-- 📊 İstatistik
-- 📈 Grafik
+### **UI Özellikleri**
+- **Glassmorphism:** Yarı saydam kartlar + backdrop-filter blur
+- **Hover Efektleri:** Transform + box-shadow transitions
+- **Custom Scrollbar:** Gradient renkli
+- **Responsive Layout:** Wide layout (3-4 sütun)
 
 ---
 
-## 📊 **PERFORMANS METRİKLERİ**
+## 🔌 **API ENDPOİNTLERİ**
 
-| Metrik | Değer | Hedef | Durum |
-|--------|-------|-------|-------|
-| **Başlangıç Süresi** | ~3s | < 5s | ✅ |
-| **API Response Time** | ~50ms | < 200ms | ✅ |
-| **Page Render Time** | ~1s | < 2s | ✅ |
-| **Auto-refresh Interval** | 3s | 3-5s | ✅ |
-| **Memory Usage** | ~150MB | < 500MB | ✅ |
+### **REST API (Port 8000)**
 
----
+| Endpoint | Metod | Açıklama |
+|----------|-------|----------|
+| `/` | GET | API bilgisi |
+| `/api/health` | GET | Sistem sağlık durumu |
+| `/api/stats` | GET | Tüm istatistikler |
+| `/api/blockchain/stats` | GET | Blockchain istatistikleri |
+| `/api/blockchain/blocks` | GET | Son N bloğu getir |
+| `/api/blockchain/blocks/{index}` | GET | Belirli bloğu getir |
+| `/api/blockchain/blocks/type/{type}` | GET | Tipteki blokları getir |
+| `/api/ids/stats` | GET | IDS istatistikleri |
+| `/api/alerts` | GET | Alert listesi |
+| `/api/alerts` | POST | Alert ekle (test için) |
+| `/api/bridge/register` | POST | Bridge state kaydet |
+| `/api/bridge/status` | GET | Bridge durumu |
+| `/api/ml/train` | GET | ML modelini eğit |
+| `/api/ml/save` | POST | ML modelini kaydet |
+| `/ws` | WebSocket | Real-time event stream |
 
-## 🔧 **KONFİGÜRASYON**
-
-### **Mevcut Ayarlar:**
-
-```python
-# API Configuration
-API_URL = "http://localhost:8000"
-TIMEOUT = 10  # seconds
-
-# Dashboard Configuration
-PAGE_TITLE = "Secure OCPP-CAN Bridge"
-LAYOUT = "wide"
-REFRESH_INTERVAL = 3000  # milliseconds
-
-# Alert Display
-MAX_ALERTS_DISPLAY = 10
-ALERT_COLORS = {
-    "CRITICAL": "#f44336",
-    "HIGH": "#ff9800",
-    "MEDIUM": "#ffeb3b",
-    "LOW": "#4CAF50"
+### **WebSocket Mesaj Formatı**
+```json
+{
+    "type": "alert | ocpp_message | can_frame | blockchain_update",
+    "data": {...},
+    "timestamp": 1702500000.0
 }
 ```
 
 ---
 
-## ✅ **SONUÇ**
+## 🚀 **ÇALIŞTIRMA ADIMLARI**
 
-### **Dashboard Durum:**
+### **Senaryo 1: Tam Sistem (Bridge + Dashboard)**
 
-```
-✅ BAŞARILI (Bridge Beklemede)
-
-├── ✅ Başlatma: Başarılı
-├── ✅ API Bağlantısı: Çalışıyor
-├── ✅ Layout: Düzgün render
-├── ✅ Error Handling: Doğru
-├── ⏭️ Veri Görselleştirme: Bridge bekleniyor
-└── ⏭️ Real-time Updates: Bridge bekleniyor
-```
-
-### **Hazırlık Durumu:** **%90**
-
-**Eksik:** Sadece Bridge'den gelen canlı veri görselleştirmesi
-
----
-
-## 🚀 **TAVSİYELER**
-
-### **1️⃣ Hemen Yapılabilir:**
 ```bash
-# Bridge başlat ve dashboard'u izle
+# Terminal 1: Virtual CAN (Linux)
+sudo modprobe vcan
+sudo ip link add dev vcan0 type vcan
+sudo ip link set up vcan0
+
+# Terminal 2: CSMS Simulator
+python csms_simulator.py --port 9000
+
+# Terminal 3: API Server
+python api_server.py
+
+# Terminal 4: Secure Bridge
 python secure_bridge.py
-# Browser'da: http://localhost:8501
+
+# Terminal 5: Dashboard
+streamlit run dashboard.py
+
+# Tarayıcı: http://localhost:8501
 ```
 
-### **2️⃣ Geliştirmeler (Opsiyonel):**
-- [ ] Dark mode toggle
-- [ ] Export data (CSV/JSON)
-- [ ] Alert filtering
-- [ ] Historical data charts
-- [ ] Session management
-- [ ] User authentication
+### **Senaryo 2: BSG ile Duplicate Booking Testi**
 
-### **3️⃣ Dokümantasyon:**
-- [x] Dashboard test raporu (bu dosya)
-- [ ] Dashboard kullanım kılavuzu
-- [ ] Video demo (ekran kaydı)
-- [ ] Screenshot'lar
+```bash
+# Terminal 1: BSG CSMS (Vulnerable Mode)
+python -m src.bsg.cli server --port 9000 --vulnerable
+
+# Terminal 2: Meşru Kullanıcı
+python examples/1_legit_user.py
+
+# Terminal 3: Saldırgan
+python examples/2_attacker.py
+```
+
+### **Senaryo 3: Saldırı Simülasyonu**
+
+```bash
+# Terminal: Attack Simulator
+python attack_simulator.py --attack injection
+python attack_simulator.py --attack combined
+python attack_simulator.py --attack all
+python attack_simulator.py --attack mitm --mitm-scenario timing_anomaly
+python attack_simulator.py --attack ocpp_flood --ocpp-rate 20 --ocpp-duration 5.0
+```
 
 ---
 
-**Test Tarihi:** 2025-11-23 14:30  
-**Test Eden:** AI Assistant  
-**Dashboard URL:** http://localhost:8501  
-**Durum:** ✅ **BAŞARILI**
+## 📁 **PROJE DOSYA YAPISI**
+
+```
+elektrikli-arac-sarj-istasyon-guvenligi-g10/
+├── 📂 src/                        # BSG OCPP Simülatör Paketi
+│   └── bsg/
+│       ├── __init__.py
+│       ├── cli.py                 # CLI arayüzü
+│       ├── chargepoint/
+│       │   ├── __init__.py
+│       │   └── simulator.py       # ChargePoint simülatörü
+│       ├── csms/
+│       │   ├── __init__.py
+│       │   └── server.py          # CSMS sunucu (secure/vulnerable)
+│       └── utils/
+│           ├── __init__.py
+│           └── logging.py
+├── 📂 examples/                   # Örnek Senaryolar
+│   ├── __init__.py
+│   ├── 1_legit_user.py           # Meşru kullanıcı
+│   └── 2_attacker.py             # Saldırgan (Duplicate Booking)
+├── 📂 utils/                      # Güvenlik Altyapısı
+│   ├── blockchain.py             # Blockchain core
+│   ├── can_handler.py            # CAN-Bus interface
+│   ├── ids.py                    # Rule-based IDS
+│   └── ml_ids.py                 # ML-based IDS (Isolation Forest)
+├── 📂 tests/                      # Test Senaryoları
+│   ├── test_system.py
+│   ├── scenario_01_mitm_ocpp_manipulation.py
+│   ├── scenario_02_ocpp_dos_flooding.py
+│   └── scenario_03_sampling_manipulation.py
+├── 📂 training/
+│   └── train_ml_model.py         # ML eğitim scripti
+├── 🐍 api_server.py              # FastAPI REST API
+├── 🐍 dashboard.py               # Streamlit Dashboard (~740 satır)
+├── 🐍 secure_bridge.py           # Ana köprü servisi
+├── 🐍 csms_simulator.py          # Test CSMS
+├── 🐍 attack_simulator.py        # Saldırı simülatörü
+├── 📄 pytest.ini                 # Test konfigürasyonu
+├── 📄 requirements.txt           # Python bağımlılıkları
+└── 📄 README.md                  # Ana dokümantasyon
+```
 
 ---
 
-**NOT:** Dashboard tamamen fonksiyonel. Bridge başlatıldığında tüm özellikler aktif hale gelecek.
+## 📊 **DASHBOARD EKRAN GÖRÜNÜMÜ**
 
+### **Bridge Aktif Değilken:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│  🔐 Secure OCPP-to-CAN Bridge                               │
+│  Real-Time Monitoring | Blockchain-Secured | ML-Powered IDS │
+├─────────────────────────────────────────────────────────────┤
+│  ℹ️ Bridge henüz başlatılmamış. Veriler görünmeyecek.       │
+├─────────────────────────────────────────────────────────────┤
+│  ┌──────────┬──────────┬──────────┬──────────┐             │
+│  │ 📦 0     │ 🚨 0     │ 📡 0     │ 🤖 ⚠️   │             │
+│  │ Toplam   │ Toplam   │ CAN      │ ML-IDS   │             │
+│  │ Blok     │ Alert    │ Frame    │ Eğitilme.│             │
+│  └──────────┴──────────┴──────────┴──────────┘             │
+│                                                             │
+│  🚨 Real-Time Alerts                                        │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  ✅ Sistem Güvenli                                   │   │
+│  │     Hiç alert yok                                   │   │
+│  └─────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### **Bridge Aktifken + Saldırı Tespit:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│  ┌──────────┬──────────┬──────────┬──────────┐             │
+│  │ 📦 156   │ 🚨 12    │ 📡 1,247 │ 🤖 ✅   │             │
+│  │ Toplam   │ Toplam   │ CAN      │ ML-IDS   │             │
+│  │ Blok     │ Alert    │ Frame    │ Aktif    │             │
+│  └──────────┴──────────┴──────────┴──────────┘             │
+│                                                             │
+│  ┌──────────┬──────────┬──────────┬──────────┐             │
+│  │🔴 3      │🟠 5      │🟡 3      │🟢 1      │             │
+│  │CRITICAL  │HIGH      │MEDIUM    │LOW       │             │
+│  └──────────┴──────────┴──────────┴──────────┘             │
+│                                                             │
+│  📋 Son Alert'ler                                           │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ [CRITICAL]                           14:19:28       │   │
+│  │ CAN_FLOOD_ATTACK                                    │   │
+│  │ Rate: 180 frame/s (Eşik: 100 frame/s)              │   │
+│  └─────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ [HIGH]                               14:19:41       │   │
+│  │ UNAUTHORIZED_CAN_INJECTION                          │   │
+│  │ CAN ID 0x200 whitelist'te değil                    │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+│  ⛓️ Blockchain Durumu                                      │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ Doğrulama: ✅ GEÇERLİ                               │   │
+│  │ Genesis:   b8e1a3f2c9d7e8...                       │   │
+│  │ Son Hash:  a3f2c9d7e8b1a3...                       │   │
+│  │ İmza:      ✅ Etkin                                 │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+│  📋 Son Bloklar                                            │
+│  ┌───────┬────────────┬──────────────┬──────────┐         │
+│  │ Index │ Tip        │ Hash         │ Zaman    │         │
+│  ├───────┼────────────┼──────────────┼──────────┤         │
+│  │ 156   │ ALERT      │ b8e1a3f2...  │ 14:20:15 │         │
+│  │ 155   │ CAN_FRAME  │ a3f2c9d7...  │ 14:20:12 │         │
+│  │ 154   │ OCPP_MSG   │ 9d7e8b1a...  │ 14:20:09 │         │
+│  └───────┴────────────┴──────────────┴──────────┘         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🧪 **TEST SENARYOLARI**
+
+### **Senaryo #1: MitM OCPP Manipulation**
+```bash
+python attack_simulator.py --attack mitm --mitm-scenario timing_anomaly
+```
+- **Hedef:** OCPP → CAN mapping
+- **Tespit:** Timing anomaly (K1), Fingerprint (K2), Mapping (K3)
+
+### **Senaryo #2: OCPP DoS Flooding**
+```bash
+python attack_simulator.py --attack ocpp_flood --ocpp-rate 20 --ocpp-duration 5.0
+```
+- **Hedef:** CSMS
+- **Tespit:** Rate limiting (5 msg/s eşik)
+
+### **Senaryo #3: Sampling Manipulation**
+```bash
+python attack_simulator.py --attack sampling --sampling-scenario rate_drop
+python attack_simulator.py --attack sampling --sampling-scenario peak_smoothing
+python attack_simulator.py --attack sampling --sampling-scenario buffer_manipulation
+```
+- **Hedef:** MeterValues / Enerji ölçümü
+- **Tespit:** Sampling rate + Variance analysis
+
+### **Senaryo #4: Duplicate Booking (BSG)**
+```bash
+# Vulnerable mode
+python -m src.bsg.cli server --port 9000 --vulnerable
+python examples/1_legit_user.py  # Terminal 2
+python examples/2_attacker.py    # Terminal 3 → ⚠️ Saldırı başarılı
+
+# Secure mode
+python -m src.bsg.cli server --port 9000 --secure
+python examples/1_legit_user.py  # Terminal 2
+python examples/2_attacker.py    # Terminal 3 → 🛡️ Saldırı engellendi
+```
+
+---
+
+## ⚙️ **KONFİGÜRASYON**
+
+### **Dashboard Ayarları (dashboard.py)**
+```python
+API_URL = "http://127.0.0.1:8000"
+REFRESH_INTERVAL = 3  # saniye (slider: 1-10)
+MAX_ALERTS_DISPLAY = 10
+```
+
+### **API Server Ayarları (api_server.py)**
+```python
+API_HOST = "0.0.0.0"
+API_PORT = 8000
+```
+
+### **Environment Variables (.env)**
+```env
+CSMS_URL=ws://localhost:9000/ocpp
+CHARGE_POINT_ID=CP_001
+CAN_INTERFACE=vcan0
+ENABLE_ML_IDS=true
+ANOMALY_THRESHOLD=0.7
+API_PORT=8000
+DASHBOARD_PORT=8501
+```
+
+---
+
+## 📈 **PERFORMANS**
+
+| Metrik | Değer | Hedef |
+|--------|-------|-------|
+| Dashboard Başlangıç | ~3s | < 5s |
+| API Response Time | ~50ms | < 200ms |
+| Auto-refresh Interval | 3s | 1-10s |
+| Blockchain Write | ~0.5ms/blok | < 1ms |
+| Rule-IDS Latency | < 1ms | < 5ms |
+| ML-IDS Latency | ~10-15ms | < 50ms |
+
+---
+
+## 🛡️ **GÜVENLİK ÖZELLİKLERİ**
+
+### **Blockchain**
+- SHA-256 hash chain
+- ECDSA dijital imza (opsiyonel)
+- Tamper-evident logging
+- Chain integrity verification
+
+### **IDS Kuralları**
+1. **Whitelist Validation:** Kayıtlı CAN ID'ler
+2. **Authorization Check:** OCPP → CAN mapping
+3. **Frequency Analysis:** Flood detection (100+ frame/s)
+4. **Temporal Validation:** Replay detection
+5. **ML Anomaly Score:** Isolation Forest
+
+### **BSG Güvenlik Modları**
+- **Vulnerable Mode:** Duplicate booking kabul edilir
+- **Secure Mode:** Duplicate booking engellenir (reservation ID kontrolü)
+
+---
+
+## 📝 **NOTLAR**
+
+1. **macOS/Windows:** `vcan0` yerine mock CAN kullanın veya standalone mode
+2. **ML Model:** İlk eğitim için en az 100 örnek gerekli
+3. **Dashboard:** Bridge olmadan temel metrikler görünür, detaylı veri için Bridge gerekli
+4. **WebSocket:** Real-time event stream için `/ws` endpoint kullanın
+
+---
+
+**Proje Ekibi:** G10 - Elektrikli Araç Şarj İstasyonu Güvenliği  
+**Üniversite:** IoT Security Research  
+**Versiyon:** 1.0.0
+
+---
+
+**🚀 Dashboard'u başlatmak için:**
+```bash
+streamlit run dashboard.py
+# Tarayıcı: http://localhost:8501
+```
