@@ -557,7 +557,7 @@ def main():
     parser.add_argument(
         "--attack",
         type=str,
-        choices=["injection", "flood", "replay", "invalid_id", "entropy", "mitm", "ocpp_flood", "sampling", "combined", "all"],
+        choices=["injection", "flood", "replay", "invalid_id", "entropy", "mitm", "ocpp_flood", "sampling", "fail_open", "combined", "all"],
         default="combined",
         help="Saldırı tipi"
     )
@@ -598,6 +598,20 @@ def main():
         type=float,
         default=120.0,
         help="Sampling manipulation süresi (saniye) - Senaryo #3"
+    )
+    
+    # Senaryo #4: Fail-Open Attack
+    parser.add_argument(
+        "--fail-open-duration",
+        type=float,
+        default=300.0,
+        help="Fail-open attack süresi (saniye) - Senaryo #4"
+    )
+    parser.add_argument(
+        "--dos-rate",
+        type=int,
+        default=100,
+        help="DoS saldırısı istek oranı (istek/saniye) - Senaryo #4"
     )
     
     args = parser.parse_args()
@@ -654,6 +668,13 @@ def main():
             simulator.sampling_manipulation(
                 scenario=args.sampling_scenario,
                 duration=args.sampling_duration
+            )
+        
+        elif args.attack == "fail_open":
+            simulator.fail_open_attack(
+                csms_url=args.csms_url,
+                duration=args.fail_open_duration,
+                dos_rate=args.dos_rate
             )
         
         elif args.attack == "combined":

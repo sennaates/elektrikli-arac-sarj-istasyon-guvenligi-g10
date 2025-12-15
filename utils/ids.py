@@ -63,6 +63,14 @@ class TrafficStats:
     energy_variance_history: List[float] = field(default_factory=list)
     raw_sample_buffer_size: int = 0
     sent_sample_count: int = 0
+    
+    # Senaryo #4: Fail-open behavior tracking
+    auth_timeout_timestamps: deque = field(default_factory=lambda: deque(maxlen=100))  # Auth timeout zamanları
+    auth_success_count: int = 0
+    auth_failure_count: int = 0
+    consecutive_auth_timeouts: int = 0
+    charge_starts_without_auth: int = 0
+    last_successful_auth_time: Optional[float] = None
 
 
 class RuleBasedIDS:
@@ -94,6 +102,12 @@ class RuleBasedIDS:
         self.min_sampling_rate = 30  # Minimum 30 sample/minute
         self.variance_drop_threshold = 0.30  # %30'dan fazla düşüş anomali
         self.buffer_mismatch_ratio = 2.0  # raw/sent > 2x ise şüpheli
+        
+        # Senaryo #4: Fail-open behavior thresholds
+        self.auth_timeout_threshold = 3  # 60 saniyede 3 timeout = şüpheli
+        self.auth_timeout_window = 60.0  # saniye
+        self.consecutive_timeout_threshold = 5  # 5 ardışık timeout
+        self.fail_open_detection_window = 10.0  # saniye (fail-open tespit penceresi)
         
         # İzin verilen CAN ID'ler (whitelist)
         self.allowed_can_ids = allowed_can_ids or {
@@ -451,6 +465,130 @@ class RuleBasedIDS:
         
         return None
     
+    def check_auth_failure(self, auth_status: str, timestamp: float, 
+                          auth_response_time: Optional[float] = None) -> Optional[Alert]:
+        """
+        Senaryo #4: Auth başarısızlığını kontrol et (Fail-Open davranışı tespiti).
+        
+        Args:
+            auth_status: "SUCCESS", "FAILED", "TIMEOUT", "UNAVAILABLE"
+            timestamp: İşlem zamanı
+            auth_response_time: Auth yanıt süresi (None ise timeout)
+        
+        Returns:
+            Alert objesi veya None
+        """
+        # Auth timeout tracking
+        if auth_status in ["TIMEOUT", "UNAVAILABLE"] or auth_response_time is None:
+            self.stats.auth_timeout_timestamps.append(timestamp)
+            self.stats.consecutive_auth_timeouts += 1
+            self.stats.auth_failure_count += 1
+            
+            # Kural-1: Auth Servis Erişilemezlik Tespiti
+            # Son 60 saniyede 3+ timeout
+            current_time = timestamp
+            recent_timeouts = [
+                ts for ts in self.stats.auth_timeout_timestamps
+                if current_time - ts <= self.auth_timeout_window
+            ]
+            
+            if len(recent_timeouts) >= self.auth_timeout_threshold:
+                alert = self._create_alert(
+                    alert_type="AUTH_SERVICE_UNAVAILABLE",
+                    severity="HIGH",
+                    description=f"Auth Servis erişilemez: Son {self.auth_timeout_window}s içinde {len(recent_timeouts)} timeout",
+                    source="OCPP",
+                    data={
+                        "auth_status": auth_status,
+                        "timeout_count": len(recent_timeouts),
+                        "threshold": self.auth_timeout_threshold,
+                        "window": self.auth_timeout_window,
+                        "consecutive_timeouts": self.stats.consecutive_auth_timeouts
+                    }
+                )
+                logger.warning(f"⚠ ALERT [SCENARIO-4]: {alert.description}")
+                return alert
+            
+            # Kural-3: Auth Timeout Pattern (Ardışık timeout'lar)
+            if self.stats.consecutive_auth_timeouts >= self.consecutive_timeout_threshold:
+                alert = self._create_alert(
+                    alert_type="AUTH_TIMEOUT_PATTERN",
+                    severity="HIGH",
+                    description=f"Ardışık auth timeout pattern: {self.stats.consecutive_auth_timeouts} ardışık timeout",
+                    source="OCPP",
+                    data={
+                        "consecutive_timeouts": self.stats.consecutive_auth_timeouts,
+                        "threshold": self.consecutive_timeout_threshold,
+                        "auth_status": auth_status
+                    }
+                )
+                logger.warning(f"⚠ ALERT [SCENARIO-4]: {alert.description}")
+                return alert
+        elif auth_status == "SUCCESS":
+            # Başarılı auth: timeout sayacını sıfırla
+            self.stats.consecutive_auth_timeouts = 0
+            self.stats.auth_success_count += 1
+            self.stats.last_successful_auth_time = timestamp
+        
+        return None
+    
+    def check_charge_without_auth(self, charge_started: bool, auth_status: str, 
+                                  timestamp: float) -> Optional[Alert]:
+        """
+        Senaryo #4: Auth olmadan şarj başlatma tespiti (Fail-Open davranışı).
+        
+        Args:
+            charge_started: Şarj başlatıldı mı?
+            auth_status: Auth durumu ("SUCCESS", "FAILED", "TIMEOUT", "UNAVAILABLE", "NONE")
+            timestamp: İşlem zamanı
+        
+        Returns:
+            Alert objesi veya None
+        """
+        if not charge_started:
+            return None
+        
+        # Auth başarısız veya yok ama şarj başladı → Fail-Open davranışı
+        if auth_status in ["FAILED", "TIMEOUT", "UNAVAILABLE", "NONE"]:
+            self.stats.charge_starts_without_auth += 1
+            
+            # Kural-2: Fail-Open Davranış Tespiti (Kritik)
+            alert = self._create_alert(
+                alert_type="FAIL_OPEN_BEHAVIOR",
+                severity="CRITICAL",
+                description=f"FAIL-OPEN DAVRANIŞI TESPİT EDİLDİ: Auth durumu '{auth_status}' olmasına rağmen şarj başlatıldı",
+                source="OCPP",
+                data={
+                    "auth_status": auth_status,
+                    "charge_started": charge_started,
+                    "timestamp": timestamp,
+                    "last_successful_auth": self.stats.last_successful_auth_time,
+                    "consecutive_timeouts": self.stats.consecutive_auth_timeouts,
+                    "note": "Sistem fail-closed yerine fail-open davranışı gösteriyor!"
+                }
+            )
+            logger.error(f"🚨 CRITICAL ALERT [SCENARIO-4]: {alert.description}")
+            return alert
+        
+        # Kural-4: Unauthorized Charge Start (Auth başarısız ama şarj başladı)
+        if auth_status == "FAILED" and charge_started:
+            alert = self._create_alert(
+                alert_type="UNAUTHORIZED_CHARGE_START",
+                severity="CRITICAL",
+                description=f"Yetkisiz şarj başlatma: Auth başarısız olmasına rağmen şarj başlatıldı",
+                source="OCPP",
+                data={
+                    "auth_status": auth_status,
+                    "charge_started": charge_started,
+                    "timestamp": timestamp,
+                    "note": "Kimlik doğrulama başarısız ama şarj başladı"
+                }
+            )
+            logger.error(f"🚨 CRITICAL ALERT [SCENARIO-4]: {alert.description}")
+            return alert
+        
+        return None
+    
     def register_expected_can_frame(self, ocpp_action: str, can_id: int):
         """
         OCPP action için beklenen CAN ID'yi kaydet (K3 için).
@@ -513,7 +651,12 @@ class RuleBasedIDS:
                 "CRITICAL": len(self.get_alerts_by_severity("CRITICAL"))
             },
             "can_id_frequency": {hex(k): v for k, v in self.stats.can_id_frequency.items()},
-            "ocpp_action_frequency": self.stats.ocpp_action_frequency
+            "ocpp_action_frequency": self.stats.ocpp_action_frequency,
+            # Senaryo #4: Auth statistics
+            "auth_success_count": self.stats.auth_success_count,
+            "auth_failure_count": self.stats.auth_failure_count,
+            "consecutive_auth_timeouts": self.stats.consecutive_auth_timeouts,
+            "charge_starts_without_auth": self.stats.charge_starts_without_auth
         }
     
     def clear_old_authorized_frames(self, older_than: float = 3600) -> None:
