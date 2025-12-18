@@ -225,7 +225,7 @@ async def get_alerts(count: int = 20, severity: Optional[str] = None):
     
     # State.ids'den alert'leri al
     if state.ids:
-            if severity:
+        if severity:
             alerts = state.ids.get_alerts_by_severity(severity)
         else:
             alerts = state.ids.get_recent_alerts(count * 2)  # Daha fazla al, sonra filtrele
@@ -288,7 +288,7 @@ async def post_alert(alert_data: dict):
                     logger.debug(f"WebSocket broadcast hatası: {e}")
             
             return {"status": "success", "alert_id": alert.alert_id}
-    else:
+        else:
             # IDS yoksa, geçici bir liste oluştur
             if not hasattr(state, "test_alerts"):
                 state.test_alerts = []
