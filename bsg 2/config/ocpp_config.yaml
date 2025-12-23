@@ -1,0 +1,52 @@
+# OCPP Yapılandırması
+
+# OCPP versiyonu
+version: "1.6"
+
+# Charge Point ayarları
+charge_point:
+  default_cp_id: "CP001"
+  vendor: "BSG Simulator"
+  model: "CP-SIM-001"
+  firmware_version: "1.0.0"
+  
+  # Bağlayıcı ayarları
+  connectors:
+    - id: 1
+      type: "Type2"
+      max_power: 22  # kW
+      status: "Available"
+    
+    - id: 2
+      type: "CCS"
+      max_power: 50  # kW
+      status: "Available"
+
+# Central System ayarları
+central_system:
+  host: "localhost"
+  port: 9000
+  
+  # Güvenlik ayarları
+  security:
+    scenarios:
+      - name: "plain_ws"
+        description: "Plain WebSocket (güvenlik yok)"
+      
+      - name: "weak_tls"
+        description: "Zayıf TLS (TLS 1.0, self-signed)"
+      
+      - name: "strong_tls"
+        description: "Güçlü TLS (TLS 1.2+, mutual TLS)"
+
+# Mesaj ayarları
+messaging:
+  heartbeat_interval: 3600  # saniye
+  timeout: 30  # saniye
+  
+# Logging ayarları
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "ocpp.log"
+

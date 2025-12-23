@@ -1,0 +1,81 @@
+# CAN-Bus Yapılandırması
+
+# CAN arayüz ayarları
+interface:
+  name: "vcan0"
+  type: "virtual"  # virtual veya physical
+  bitrate: 500000  # 500 kbps (CAN 2.0 standard)
+  
+  # Physical interface için (opsiyonel)
+  physical:
+    name: "can0"
+    driver: "socketcan"
+    interface: "can0"
+
+# CAN ID tanımlamaları
+can_ids:
+  # OCPP mesajları için CAN ID'ler
+  ocpp:
+    remote_start: 0x200
+    remote_stop: 0x201
+    set_charging_profile: 0x210
+    meter_values: 0x300
+    charge_status: 0x301
+    
+  # Sistem mesajları
+  system:
+    error: 0x9FF
+    heartbeat: 0x7FF
+    
+  # Standart için ayrılmış ID'ler
+  reserved:
+    - 0x000  # CAN 2.0'da kullanılmaz
+    - 0x7FF  # Broadcast ID
+    - 0x800  # Extended frame başlangıcı
+
+# CAN mesaj formatları
+message_formats:
+  remote_start:
+    id: 0x200
+    dlc: 2
+    format: "BB"  # struct format
+    fields:
+      - name: "cp_id"
+        type: "uint8"
+        description: "Charge Point ID"
+      
+      - name: "connector_id"
+        type: "uint8"
+        description: "Connector ID"
+  
+  meter_values:
+    id: 0x300
+    dlc: 8
+    format: "BHHH"
+    fields:
+      - name: "connector_id"
+        type: "uint8"
+      
+      - name: "energy"
+        type: "uint16"
+        unit: "Wh"
+      
+      - name: "voltage"
+        type: "uint16"
+        unit: "V"
+      
+      - name: "current"
+        type: "uint16"
+        unit: "mA"
+
+# Saldırı tespit ayarları
+ids:
+  enabled: true
+  window_size: 100
+  learning_duration: 30  # saniye
+  
+  thresholds:
+    min_frequency: 0.01
+    max_frequency: 0.5
+    burst_threshold: 10  # saniyede maks mesaj sayısı
+
