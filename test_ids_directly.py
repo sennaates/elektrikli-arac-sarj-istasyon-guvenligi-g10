@@ -117,6 +117,42 @@ def test_scenario_2_ocpp_flooding(send_to_api: bool = True):
         return False
 
 
+def test_scenario_4_advanced_flooding(send_to_api: bool = True):
+    """Senaryo #4: Advanced OCPP Message Flooding"""
+    print("\n" + "="*60)
+    print("SENARYO #4: Advanced OCPP Message Flooding Test")
+    print("="*60)
+    
+    ids = RuleBasedIDS()
+    alerts = []
+    
+    logger.info("20 mesaj/saniye gönderiliyor (eşik: 5 mesaj/s)...")
+    
+    # 20 mesaj/saniye gönder (eşik: 5 mesaj/s)
+    for i in range(20):
+        alert = ids.check_ocpp_message(
+            "Heartbeat",
+            {},
+            time.time()
+        )
+        if alert:
+            alerts.append(alert)
+            logger.warning(f"   [{i+1}] Alert tespit edildi: {alert.alert_type}")
+        time.sleep(0.05)  # 20 mesaj/saniye
+    
+    if alerts:
+        logger.success(f"✅ {len(alerts)} ALERT TESPİT EDİLDİ")
+        for alert in alerts:
+            logger.info(f"   - {alert.alert_type} ({alert.severity})")
+            if send_to_api:
+                send_alert_to_api(alert.to_dict())
+        return True
+    else:
+        logger.error("❌ Alert tespit edilmedi!")
+        logger.info("   Not: OCPP_RATE_LIMIT_EXCEEDED alert'i bekleniyor")
+        return False
+
+
 def test_scenario_3_sampling_manipulation(send_to_api: bool = True):
     """Senaryo #3: Sampling Rate Drop"""
     print("\n" + "="*60)
@@ -226,6 +262,15 @@ def main():
     except Exception as e:
         logger.error(f"Senaryo #3 hatası: {e}")
         results.append(("Senaryo #3", False))
+    
+    time.sleep(2)
+    
+    # Test 4
+    try:
+        results.append(("Senaryo #4 (Advanced OCPP Flooding)", test_scenario_4_advanced_flooding()))
+    except Exception as e:
+        logger.error(f"Senaryo #4 hatası: {e}")
+        results.append(("Senaryo #4", False))
     
     # Özet
     print("\n" + "="*70)

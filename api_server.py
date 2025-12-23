@@ -155,7 +155,7 @@ async def health_check():
         "components": {
             "blockchain": state.blockchain is not None or (state.bridge_active and state.bridge_stats and "blockchain" in state.bridge_stats),
             "ids": state.ids is not None or (state.bridge_active and state.bridge_stats and "ids" in state.bridge_stats),
-            "ml_ids": (state.ml_ids is not None and state.ml_ids.is_trained) or (state.bridge_active and state.bridge_stats and "ml" in state.bridge_stats),
+            "ml_ids": (state.ml_ids is not None and getattr(state.ml_ids, 'is_trained', False)) or (state.bridge_active and state.bridge_stats and "ml" in state.bridge_stats),
             "bridge": state.bridge_active
         }
     }
@@ -189,10 +189,7 @@ async def get_blockchain_blocks(count: int = 10):
     
     # Yoksa mevcut state'den oku
     if not state.blockchain:
-        # Bridge aktif değilse 503 döndür
-        if not state.bridge_active:
-            return JSONResponse({"error": "Blockchain not initialized"}, status_code=503)
-        # Bridge aktif ama state yok, boş liste döndür
+        # Bridge aktif değilse boş liste döndür (hata degil)
         return []
     
     blocks = state.blockchain.get_recent_blocks(count)
@@ -230,7 +227,14 @@ async def get_ids_stats():
         return state.bridge_stats["ids"]
     
     if not state.ids:
-        return JSONResponse({"error": "IDS not initialized"}, status_code=503)
+        # IDS yoksa boş istatistik dön
+        return {
+            "total_alerts": len(state.test_alerts),
+            "total_ocpp_messages": 0,
+            "total_can_frames": 0,
+            "authorized_can_frames": 0,
+            "unauthorized_can_frames": 0
+        }
     
     return state.ids.get_stats()
 
@@ -381,9 +385,9 @@ async def get_all_stats():
         
         if state.ml_ids:
             stats["ml"] = {
-                "is_trained": state.ml_ids.is_trained,
-                "training_samples": len(state.ml_ids.training_buffer),
-                "contamination": state.ml_ids.contamination
+                "is_trained": getattr(state.ml_ids, 'is_trained', False),
+                "training_samples": len(state.ml_ids.training_buffer) if hasattr(state.ml_ids, 'training_buffer') else 0,
+                "contamination": getattr(state.ml_ids, 'contamination', 0.1)
             }
     
     return stats
