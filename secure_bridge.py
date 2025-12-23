@@ -495,9 +495,22 @@ class SecureBridgeService:
         recent_blocks = self.blockchain.get_recent_blocks(20)
         blockchain_stats["recent_blocks"] = [block.to_dict() for block in recent_blocks]
         
+        # ML-IDS stats
+        ml_stats = None
+        if self.ids.ml_based_ids:
+            ml_stats = {
+                "is_trained": self.ids.ml_based_ids.is_trained,
+                "model_loaded": self.ids.ml_based_ids.model is not None,
+                "threshold": self.ids.ml_based_ids.threshold,
+                "training_samples": len(self.ids.ml_based_ids.training_buffer) if hasattr(self.ids.ml_based_ids, 'training_buffer') else 0,
+                "ml_detections": getattr(self.ids, 'ml_detection_count', 0),
+                "total_ml_checks": getattr(self.ids, 'total_ml_checks', 0)
+            }
+        
         return {
             "blockchain": blockchain_stats,
             "ids": ids_stats,
+            "ml": ml_stats,
             "can_handler": {
                 "interface": self.can_handler.interface,
                 "is_connected": self.can_handler.is_connected

@@ -222,9 +222,13 @@ class MLBasedIDS:
         self.feature_extractor = FeatureExtractor()
         self.scaler = StandardScaler()
         
+        # Training buffer
+        self.training_buffer: List[np.ndarray] = []
+        self.is_trained = False  # Varsayılan olarak eğitilmemiş
+        
         # Model yükle veya yeni oluştur
         if model_path:
-            self.load_model(model_path)
+            self.load_model(model_path)  # Bu is_trained = True yapacak
         else:
             self.model = IsolationForest(
                 contamination=contamination,
@@ -232,10 +236,6 @@ class MLBasedIDS:
                 n_estimators=100
             )
             logger.info("Yeni Isolation Forest modeli oluşturuldu (eğitilmemiş)")
-        
-        # Training buffer
-        self.training_buffer: List[np.ndarray] = []
-        self.is_trained = False
     
     def predict(
         self,
@@ -251,7 +251,7 @@ class MLBasedIDS:
             - is_anomaly: True ise anomali
             - anomaly_score: 0-1 arası, 1'e yakın = daha anormal
         """
-        if not self.model or not self.is_trained:
+        if self.model is None or not self.is_trained:
             return False, 0.0
         
         # Feature extraction
@@ -297,7 +297,7 @@ class MLBasedIDS:
         Returns:
             Başarılı mı?
         """
-        if not self.model or not SKLEARN_AVAILABLE:
+        if self.model is None or not SKLEARN_AVAILABLE:
             logger.error("Model veya sklearn mevcut değil!")
             return False
         
@@ -326,7 +326,7 @@ class MLBasedIDS:
     
     def save_model(self, path: str) -> bool:
         """Modeli ve scaler'ı kaydet"""
-        if not self.model or not self.is_trained:
+        if self.model is None or not self.is_trained:
             logger.error("Eğitilmiş model yok!")
             return False
         
@@ -380,6 +380,10 @@ class HybridIDS:
         self.ml_based_ids = ml_based_ids
         self.ml_weight = ml_weight
         
+        # ML tespit sayacı
+        self.ml_detection_count = 0
+        self.total_ml_checks = 0
+        
         logger.info(f"Hybrid IDS başlatıldı (ML weight={ml_weight})")
     
     def check_can_frame(
@@ -400,10 +404,12 @@ class HybridIDS:
         # 2. ML-based check (eğer model varsa ve eğitilmişse)
         ml_score = None
         if self.ml_based_ids and self.ml_based_ids.is_trained:
+            self.total_ml_checks += 1
             is_ml_anomaly, ml_score = self.ml_based_ids.predict(can_id, data, timestamp)
             
             # ML anomali tespit ettiyse ve rule-based tespit etmediyse
             if is_ml_anomaly and not alert:
+                self.ml_detection_count += 1
                 # ML-based alert oluştur
                 alert = self.rule_based_ids._create_alert(
                     alert_type="ML_ANOMALY_DETECTED",
@@ -416,7 +422,7 @@ class HybridIDS:
                         "ml_score": ml_score
                     }
                 )
-                logger.info(f"ML-IDS Alert: {alert.description}")
+                logger.info(f"🤖 ML-IDS Alert: {alert.description}")
         
         return alert, ml_score
 
