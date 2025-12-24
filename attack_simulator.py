@@ -14,6 +14,9 @@ import requests
 from datetime import datetime
 from typing import List, Dict
 from loguru import logger
+
+# Dashboard API URL
+API_URL = "http://localhost:8000/api/alerts"
 # Eğer utils.can_handler yoksa hata vermemesi için try-except veya proje yapısına göre import
 try:
     from utils.can_handler import CANBusHandler, CANFrame
@@ -50,11 +53,32 @@ class AttackSimulator:
     10. Fail-Open / DoS Attack (Senaryo #4 Alternatif)
     """
     
-    def __init__(self, interface: str = "vcan0"):
+    def __init__(self, interface: str = "vcan0", api_url: str = API_URL):
         self.interface = interface
         self.can_handler = CANBusHandler(interface=interface)
+        self.api_url = api_url
         
         logger.info(f"AttackSimulator başlatıldı: {interface}")
+    
+    def send_dashboard_alert(self, alert_type: str, severity: str, description: str, source: str = "CAN", data: dict = None):
+        """Dashboard API'sine alert gönder"""
+        alert_data = {
+            "alert_id": f"{alert_type}-{int(time.time()*1000)}",
+            "timestamp": time.time(),
+            "severity": severity,
+            "alert_type": alert_type,
+            "description": description,
+            "source": source,
+            "data": data or {}
+        }
+        try:
+            response = requests.post(self.api_url, json=alert_data, timeout=2)
+            if response.status_code == 200:
+                logger.info(f"📊 Dashboard Alert Gönderildi: {alert_type}")
+            else:
+                logger.warning(f"Dashboard Alert Hatası: {response.status_code}")
+        except Exception as e:
+            logger.debug(f"Dashboard bağlantı hatası (normal olabilir): {e}")
     
     def connect(self) -> bool:
         """CAN-Bus'a bağlan"""
@@ -80,6 +104,12 @@ class AttackSimulator:
             time.sleep(0.1)
         
         logger.warning(f"✓ Unauthorized Injection tamamlandı ({count} frame)")
+        self.send_dashboard_alert(
+            alert_type="UNAUTHORIZED_CAN_INJECTION",
+            severity="HIGH",
+            description=f"Yetkisiz CAN frame enjeksiyonu tespit edildi: {count} frame, ID={hex(can_id)}",
+            data={"can_id": hex(can_id), "frame_count": count}
+        )
     
     # Saldırı 2: CAN Flood Attack
     def can_flood(self, can_id: int = 0x201, duration: float = 2.0, rate: int = 200):
@@ -98,6 +128,12 @@ class AttackSimulator:
             time.sleep(1.0 / rate)
         
         logger.warning(f"✓ CAN Flood tamamlandı ({frame_count} frame {duration}s içinde)")
+        self.send_dashboard_alert(
+            alert_type="CAN_FLOOD_ATTACK",
+            severity="CRITICAL",
+            description=f"CAN Bus flood saldırısı: {frame_count} frame {duration}s içinde gönderildi",
+            data={"frame_count": frame_count, "duration": duration, "rate": rate}
+        )
     
     # Saldırı 3: Replay Attack
     def replay_attack(self, can_id: int = 0x200, original_data: List[int] = None, 
@@ -117,6 +153,12 @@ class AttackSimulator:
                 time.sleep(delay)
         
         logger.warning(f"✓ Replay Attack tamamlandı")
+        self.send_dashboard_alert(
+            alert_type="REPLAY_ATTACK",
+            severity="HIGH",
+            description=f"CAN frame replay saldırısı: ID={hex(can_id)}, {replay_count} tekrar",
+            data={"can_id": hex(can_id), "replay_count": replay_count}
+        )
     
     # Saldırı 4: Invalid CAN ID Attack
     def invalid_can_id(self, invalid_id: int = 0x9FF, count: int = 5):
@@ -132,6 +174,12 @@ class AttackSimulator:
             time.sleep(0.1)
         
         logger.warning(f"✓ Invalid CAN ID Attack tamamlandı")
+        self.send_dashboard_alert(
+            alert_type="INVALID_CAN_ID",
+            severity="MEDIUM",
+            description=f"Geçersiz CAN ID ile frame gönderildi: {hex(invalid_id)}",
+            data={"invalid_id": hex(invalid_id), "count": count}
+        )
     
     # Saldırı 5: High Entropy Attack
     def high_entropy_attack(self, can_id: int = 0x200, count: int = 10):
@@ -147,6 +195,12 @@ class AttackSimulator:
             time.sleep(0.2)
         
         logger.warning(f"✓ High Entropy Attack tamamlandı")
+        self.send_dashboard_alert(
+            alert_type="HIGH_ENTROPY_ATTACK",
+            severity="HIGH",
+            description=f"Yüksek entropi (rastgele payload) saldırısı: {count} frame",
+            data={"can_id": hex(can_id), "count": count}
+        )
     
     # Saldırı 6: MitM OCPP Manipulation
     def mitm_ocpp_manipulation(self, scenario: str = "start_to_stop"):
@@ -188,6 +242,13 @@ class AttackSimulator:
             logger.error("   ⚠️  Timing Anomaly: Start sonrası 1 saniyede Stop!")
         
         logger.warning(f"✓ MitM OCPP Manipulation tamamlandı")
+        self.send_dashboard_alert(
+            alert_type="MITM_OCPP_MANIPULATION",
+            severity="CRITICAL",
+            description=f"Man-in-the-Middle OCPP mesaj manipülasyonu: {scenario}",
+            source="OCPP",
+            data={"scenario": scenario}
+        )
     
     # Saldırı 7: OCPP Message Flooding
     async def ocpp_message_flooding_async(self, csms_url: str = "ws://localhost:9000", rate: int = 20, duration: float = 5.0, message_type: str = "Heartbeat"):
@@ -207,11 +268,27 @@ class AttackSimulator:
                     await asyncio.sleep(1.0 / rate)
                 
                 logger.warning(f"✓ Flooding tamamlandı: {message_count} mesaj")
+                # Dashboard alert'i async dışında gönder
         except Exception as e:
             logger.error(f"   Flooding hatası: {e}")
     
+    def _send_ocpp_flood_alert(self, message_count: int, rate: int, duration: float):
+        """OCPP flooding sonrası alert gönder"""
+        self.send_dashboard_alert(
+            alert_type="OCPP_FLOOD_ATTACK",
+            severity="CRITICAL",
+            description=f"OCPP mesaj flooding saldırısı: {message_count} mesaj, {rate}/s",
+            source="OCPP",
+            data={"message_count": message_count, "rate": rate, "duration": duration}
+        )
+    
     def ocpp_message_flooding(self, **kwargs):
         asyncio.run(self.ocpp_message_flooding_async(**kwargs))
+        self._send_ocpp_flood_alert(
+            message_count=int(kwargs.get('rate', 20) * kwargs.get('duration', 5.0)),
+            rate=kwargs.get('rate', 20),
+            duration=kwargs.get('duration', 5.0)
+        )
 
     # Saldırı 8: Sampling Manipulation
     def sampling_manipulation(self, scenario: str = "rate_drop", duration: float = 120.0):
@@ -245,6 +322,13 @@ class AttackSimulator:
                 time.sleep(1.0)
                 
         logger.warning(f"✓ Sampling Manipulation tamamlandı")
+        self.send_dashboard_alert(
+            alert_type="SAMPLING_MANIPULATION",
+            severity="HIGH",
+            description=f"Enerji örnekleme manipülasyonu: {scenario}",
+            source="OCPP",
+            data={"scenario": scenario, "duration": duration}
+        )
 
     # Saldırı 9: OCPP Protocol Fuzzing (Senaryo #4)
     def ocpp_fuzzing_attack(self, target_url: str, intensity: int = 10):
@@ -261,6 +345,13 @@ class AttackSimulator:
             time.sleep(0.5)
 
         logger.warning(f"✓ [OCPP Protocol Fuzzing] tamamlandı")
+        self.send_dashboard_alert(
+            alert_type="OCPP_PROTOCOL_FUZZING",
+            severity="HIGH",
+            description=f"OCPP protokol fuzzing saldırısı: {intensity} deneme",
+            source="OCPP",
+            data={"target_url": target_url, "intensity": intensity}
+        )
 
     # Saldırı 10: Fail-Open Attack (Senaryo #4 Alternatif)
     def fail_open_attack(self, csms_url: str, duration: float = 300.0, dos_rate: int = 100):
@@ -297,6 +388,13 @@ class AttackSimulator:
             logger.info("Saldırı durduruldu.")
             
         logger.warning(f"✓ [Fail-Open Attack] tamamlandı. Sistem Offline moda zorlandı.")
+        self.send_dashboard_alert(
+            alert_type="FAIL_OPEN_ATTACK",
+            severity="CRITICAL",
+            description=f"Fail-Open saldırısı: CSMS bağlantısı koparıldı, sistem offline moda zorlandı",
+            source="OCPP",
+            data={"csms_url": csms_url, "duration": duration, "dos_rate": dos_rate}
+        )
 
     # Saldırı 11: Ransomware Attack (Senaryo #5)
     def ransomware_attack(self):

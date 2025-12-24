@@ -5,8 +5,12 @@ OCPP 1.6 WebSocket sunucusu simüle eder.
 import asyncio
 import websockets
 import json
+import requests
 from datetime import datetime
 from loguru import logger
+
+# Dashboard API URL
+API_URL = "http://localhost:8000"
 
 
 class SimpleCSMS:
@@ -18,6 +22,34 @@ class SimpleCSMS:
         self.connected_chargers = {}
         self.auto_test = auto_test
         self.test_task = None
+        self.transactions = []
+        self.transaction_counter = 0
+    
+    def update_dashboard(self):
+        """Dashboard API'sine BSG verilerini gönder"""
+        try:
+            bsg_data = {
+                "charge_points": [
+                    {
+                        "charge_point_id": cp_id,
+                        "connected": True,
+                        "status": "Available",
+                        "last_heartbeat": datetime.utcnow().isoformat()
+                    }
+                    for cp_id in self.connected_chargers.keys()
+                ],
+                "transactions": self.transactions,
+                "statistics": {
+                    "connected_charge_points": len(self.connected_chargers),
+                    "total_transactions": len(self.transactions),
+                    "active_transactions": len([t for t in self.transactions if t.get("active", False)]),
+                    "inactive_transactions": len([t for t in self.transactions if not t.get("active", False)])
+                }
+            }
+            requests.post(f"{API_URL}/api/bsg/register", json=bsg_data, timeout=2)
+            logger.debug(f"📊 Dashboard güncellendi: {len(self.connected_chargers)} CP bağlı")
+        except Exception as e:
+            logger.debug(f"Dashboard güncellenemedi: {e}")
     
     async def handle_client(self, websocket, path):
         """Client bağlantısını handle et"""
@@ -62,6 +94,9 @@ class SimpleCSMS:
                             
                             logger.success(f"✓ {charger_id} kabul edildi")
                             
+                            # Dashboard'ı güncelle
+                            self.update_dashboard()
+                            
                             # Otomatik test modu aktifse test komutlarını gönder
                             if self.auto_test:
                                 logger.info("🧪 Otomatik test modu aktif, test komutları gönderilecek...")
@@ -92,6 +127,46 @@ class SimpleCSMS:
                                 {}
                             ]
                         
+                        elif action == "StartTransaction":
+                            # Transaction başlat
+                            self.transaction_counter += 1
+                            tx = {
+                                "transaction_id": self.transaction_counter,
+                                "charge_point_id": charger_id,
+                                "connector_id": payload.get("connectorId", 1),
+                                "id_tag": payload.get("idTag", "UNKNOWN"),
+                                "start_time": datetime.utcnow().isoformat(),
+                                "active": True
+                            }
+                            self.transactions.append(tx)
+                            self.update_dashboard()
+                            
+                            response = [
+                                3,  # CALLRESULT
+                                message_id,
+                                {
+                                    "transactionId": self.transaction_counter,
+                                    "idTagInfo": {"status": "Accepted"}
+                                }
+                            ]
+                            logger.success(f"✓ Transaction başlatıldı: #{self.transaction_counter}")
+                        
+                        elif action == "StopTransaction":
+                            # Transaction durdur
+                            tx_id = payload.get("transactionId")
+                            for tx in self.transactions:
+                                if tx.get("transaction_id") == tx_id:
+                                    tx["active"] = False
+                                    tx["stop_time"] = datetime.utcnow().isoformat()
+                            self.update_dashboard()
+                            
+                            response = [
+                                3,  # CALLRESULT
+                                message_id,
+                                {"idTagInfo": {"status": "Accepted"}}
+                            ]
+                            logger.success(f"✓ Transaction durduruldu: #{tx_id}")
+                        
                         else:
                             # Generic response
                             response = [
@@ -116,6 +191,8 @@ class SimpleCSMS:
         finally:
             if charger_id and charger_id in self.connected_chargers:
                 del self.connected_chargers[charger_id]
+                self.update_dashboard()
+                logger.info(f"📊 Dashboard güncellendi: {charger_id} ayrıldı")
     
     async def send_remote_command(self, charger_id: str, action: str, payload: dict):
         """Şarj istasyonuna uzaktan komut gönder"""

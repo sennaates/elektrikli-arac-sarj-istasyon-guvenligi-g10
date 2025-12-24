@@ -105,11 +105,14 @@ class MLBasedIDS:
         self.threshold = threshold
         self.feature_extractor = FeatureExtractor()
         self.scaler = StandardScaler()
-        self.training_buffer: List[np.ndarray] = []
-        self.is_trained = False
         
+        # Training buffer
+        self.training_buffer: List[np.ndarray] = []
+        self.is_trained = False  # Varsayılan olarak eğitilmemiş
+        
+        # Model yükle veya yeni oluştur
         if model_path:
-            self.load_model(model_path)
+            self.load_model(model_path)  # Bu is_trained = True yapacak
         else:
             self.model = IsolationForest(
                 contamination=contamination,
@@ -118,8 +121,20 @@ class MLBasedIDS:
             )
             logger.info("Yeni Isolation Forest modeli oluşturuldu (eğitilmemiş)")
     
-    def predict(self, can_id: int, data: List[int], timestamp: float) -> Tuple[bool, float]:
-        # KRİTİK DÜZELTME 1: "if not self.model" yerine "is None"
+    def predict(
+        self,
+        can_id: int,
+        data: List[int],
+        timestamp: float
+    ) -> Tuple[bool, float]:
+        """
+        CAN frame'in anomali olup olmadığını tahmin et.
+        
+        Returns:
+            (is_anomaly, anomaly_score) tuple
+            - is_anomaly: True ise anomali
+            - anomaly_score: 0-1 arası, 1'e yakın = daha anormal
+        """
         if self.model is None or not self.is_trained:
             return False, 0.0
         
@@ -150,7 +165,15 @@ class MLBasedIDS:
         self.training_buffer.append(features)
     
     def train(self, min_samples: int = 100) -> bool:
-        # KRİTİK DÜZELTME 2: "if not self.model" yerine "is None"
+        """
+        Modeli eğit.
+        
+        Args:
+            min_samples: Minimum eğitim örneği sayısı
+        
+        Returns:
+            Başarılı mı?
+        """
         if self.model is None or not SKLEARN_AVAILABLE:
             logger.error("Model veya sklearn mevcut değil!")
             return False
@@ -179,7 +202,7 @@ class MLBasedIDS:
             return False
     
     def save_model(self, path: str) -> bool:
-        # KRİTİK DÜZELTME 3: "if not self.model" yerine "is None"
+        """Modeli ve scaler'ı kaydet"""
         if self.model is None or not self.is_trained:
             logger.error("Eğitilmiş model yok!")
             return False
@@ -223,17 +246,37 @@ class HybridIDS:
         self.ml_based_ids = ml_based_ids
         self.ml_weight = ml_weight
         
-    def check_can_frame(self, can_id: int, data: List[int], timestamp: float) -> Tuple[Optional[object], Optional[float]]:
+        # ML tespit sayacı
+        self.ml_detection_count = 0
+        self.total_ml_checks = 0
+        
+        logger.info(f"Hybrid IDS başlatıldı (ML weight={ml_weight})")
+    
+    def check_can_frame(
+        self,
+        can_id: int,
+        data: List[int],
+        timestamp: float
+    ) -> Tuple[Optional[object], Optional[float]]:
+        """
+        CAN frame'i hem rule-based hem ML-based kontrol et.
+        
+        Returns:
+            (Alert object or None, ML anomaly score or None)
+        """
         # 1. Rule-based check
         alert = self.rule_based_ids.check_can_frame(can_id, data, timestamp)
         
         # 2. ML-based check
         ml_score = None
         if self.ml_based_ids and self.ml_based_ids.is_trained:
+            self.total_ml_checks += 1
             is_ml_anomaly, ml_score = self.ml_based_ids.predict(can_id, data, timestamp)
             
             # ML anomali bulduysa ve Rule-Based bulmadıysa alert üret
             if is_ml_anomaly and not alert:
+                self.ml_detection_count += 1
+                # ML-based alert oluştur
                 alert = self.rule_based_ids._create_alert(
                     alert_type="ML_ANOMALY_DETECTED",
                     severity="MEDIUM",
@@ -245,6 +288,6 @@ class HybridIDS:
                         "ml_score": ml_score
                     }
                 )
-                logger.info(f"ML-IDS Alert: {alert.description}")
+                logger.info(f"🤖 ML-IDS Alert: {alert.description}")
         
         return alert, ml_score
