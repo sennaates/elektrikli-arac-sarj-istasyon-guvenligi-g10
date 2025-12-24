@@ -1,9 +1,10 @@
 """
 CAN-Bus Handler Modülü
-OCPP komutlarını CAN frame'lerine çevirir ve vcan0 üzerinde iletişim kurar.
+OCPP komutlarını CAN frame'lerine çevirir ve vcan0 (veya Mac'te UDP) üzerinde iletişim kurar.
 """
 import can
 import time
+import platform  # EKLENDİ: İşletim sistemi kontrolü için
 from typing import Dict, Optional, List, Tuple
 from dataclasses import dataclass
 from loguru import logger
@@ -195,9 +196,25 @@ class CANBusHandler:
         self.is_connected = False
         
 
-
     def connect(self) -> bool:
-        """CAN bus'a bağlan (SocketCAN veya Virtual)"""
+        """CAN bus'a bağlan (SocketCAN, UDP Multicast veya Virtual)"""
+        
+        # 0. Deneme: macOS Kontrolü (UDP Multicast)
+        if platform.system() == "Darwin":
+            try:
+                # Mac ise UDP üzerinden haberleş (Sanal kablo taklidi)
+                self.bus = can.Bus(
+                    interface='udp_multicast', 
+                    channel='224.0.0.1', 
+                    bitrate=self.bitrate
+                )
+                self.is_connected = True
+                logger.info("🍎 macOS Modu Aktif: UDP Multicast (224.0.0.1) kullanılıyor.")
+                return True
+            except Exception as e_mac:
+                logger.error(f"macOS UDP bağlantı hatası: {e_mac}")
+                # Hata durumunda devam edip diğer yöntemleri denesin
+        
         # 1. Deneme: Gerçek Linux (SocketCAN)
         try:
             self.bus = can.Bus(
@@ -210,20 +227,23 @@ class CANBusHandler:
             return True
         except Exception as e_socket:
             # 2. Deneme: Windows/WSL (Virtual) - Fallback
-            logger.warning(f"SocketCAN başlatılamadı ({e_socket}). Sanal mod deneniyor...")
-            try:
-                self.bus = can.interface.Bus(
-                    channel=self.interface,
-                    bustype='virtual'
-                )
-                self.is_connected = True
-                logger.info(f"✓ CAN Bus'a bağlanıldı (Virtual Mod): {self.interface}")
-                return True
-            except Exception as e_virtual:
-                # İkisi de başarısız olursa
-                logger.error(f"✗ CAN Bus bağlantı hatası (Virtual da başarısız): {e_virtual}")
-                self.is_connected = False
-                return False
+            # SocketCAN hatası normal olabilir (Windows/Mac), loglamaya gerek yok
+            pass
+
+        # 3. Deneme: Virtual Interface (Her yerde çalışır, test için)
+        try:
+            self.bus = can.interface.Bus(
+                channel=self.interface,
+                bustype='virtual'
+            )
+            self.is_connected = True
+            logger.info(f"✓ CAN Bus'a bağlanıldı (Virtual Mod): {self.interface}")
+            return True
+        except Exception as e_virtual:
+            # Hiçbiri çalışmazsa
+            logger.error(f"✗ CAN Bus bağlantı hatası (Tüm yöntemler denendi): {e_virtual}")
+            self.is_connected = False
+            return False
 
     
     def disconnect(self) -> None:
@@ -242,7 +262,8 @@ class CANBusHandler:
         try:
             msg = frame.to_message()
             self.bus.send(msg)
-            logger.debug(f"CAN Frame gönderildi: ID={hex(frame.can_id)}, Data={[hex(b) for b in frame.data]}")
+            # Çok sık log basmaması için debug seviyesinde tutuyoruz
+            # logger.debug(f"CAN Frame gönderildi: ID={hex(frame.can_id)}")
             return True
         except Exception as e:
             logger.error(f"CAN frame gönderme hatası: {e}")
@@ -257,10 +278,16 @@ class CANBusHandler:
             msg = self.bus.recv(timeout=timeout)
             if msg:
                 frame = CANFrame.from_message(msg)
-                logger.debug(f"CAN Frame alındı: ID={hex(frame.can_id)}")
+                # logger.debug(f"CAN Frame alındı: ID={hex(frame.can_id)}")
                 return frame
         except Exception as e:
-            logger.error(f"CAN frame alma hatası: {e}")
+            # "could not unpack received message" hatası saldırı simülasyonlarında (fuzzing vb.) normaldir.
+            if "could not unpack" in str(e):
+                # Bu hata genellikle UDP/Multicast modunda bozuk paket geldiğinde olur.
+                # Saldırı senaryolarında (Fuzzing, Entropy) beklenen bir durumdur.
+                pass 
+            else:
+                logger.error(f"CAN frame alma hatası: {e}")
         
         return None
     
@@ -302,11 +329,13 @@ if __name__ == "__main__":
     
     handler = CANBusHandler(interface="vcan0")
     if handler.connect():
-        print("✓ vcan0'a başarıyla bağlanıldı")
+        print("✓ CAN Bus'a başarıyla bağlanıldı")
+        
+        # Test mesajı gönder (Kendine)
+        test_frame = CANFrame(0x123, [1, 2, 3, 4, 5, 6, 7, 8], 8, time.time())
+        if handler.send_frame(test_frame):
+            print("✓ Test mesajı gönderildi")
+            
         handler.disconnect()
     else:
-        print("✗ vcan0 bulunamadı. Kurmak için:")
-        print("  sudo modprobe vcan")
-        print("  sudo ip link add dev vcan0 type vcan")
-        print("  sudo ip link set up vcan0")
-
+        print("✗ CAN Bus bulunamadı.")

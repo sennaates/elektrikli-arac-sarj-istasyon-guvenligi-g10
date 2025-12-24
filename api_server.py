@@ -35,7 +35,8 @@ except ImportError:
 try:
     from utils.blockchain import Blockchain
     from utils.ids import RuleBasedIDS
-    from utils.ml_ids import MLBasedIDS, SKLEARN_AVAILABLE
+    # HIBRIT YAPI İÇİN GÜNCELLENDİ: HybridIDS eklendi
+    from utils.ml_ids import MLBasedIDS, HybridIDS, SKLEARN_AVAILABLE
 except ImportError as e:
     logger.warning(f"Internal modüller yüklenemedi, dummy sınıflar kullanılıyor: {e}")
     # Dummy classes/variables to prevent startup crash if utils are missing
@@ -55,6 +56,8 @@ except ImportError as e:
         contamination = 0.0
         def train(self, m): return False
         def save_model(self, p): return False
+    class HybridIDS:
+        def __init__(self, r, m): pass
 
 load_dotenv()
 
@@ -107,6 +110,8 @@ class GlobalState:
     blockchain: Optional[Blockchain] = None
     ids: Optional[RuleBasedIDS] = None
     ml_ids: Optional[MLBasedIDS] = None
+    hybrid_ids: Optional[HybridIDS] = None # YENİ: Hibrit yapı
+    
     websocket_clients: List[WebSocket] = []
     event_queue: asyncio.Queue = asyncio.Queue()
     bridge_active: bool = False
@@ -183,7 +188,7 @@ async def health_check():
         "components": {
             "blockchain": state.blockchain is not None or (state.bridge_active and state.bridge_stats and "blockchain" in state.bridge_stats),
             "ids": state.ids is not None or (state.bridge_active and state.bridge_stats and "ids" in state.bridge_stats),
-            "ml_ids": (state.ml_ids is not None and getattr(state.ml_ids, 'is_trained', False)) or (state.bridge_active and state.bridge_stats and "ml" in state.bridge_stats),
+            "ml_ids": (state.ml_ids is not None and getattr(state.ml_ids, 'is_ready', False)) or (state.bridge_active and state.bridge_stats and "ml" in state.bridge_stats),
             "bridge": state.bridge_active
         }
     }
@@ -306,72 +311,35 @@ async def get_alerts(count: int = 20, severity: Optional[str] = None):
 async def post_alert(alert_data: dict):
     """Alert'i API server'a ekle (test scriptleri için)"""
     try:
-        # Eğer state.ids varsa alert'i ekle
-        if state.ids:
-            # Alert objesi oluştur
-            from utils.ids import Alert
-            alert = Alert(
-                alert_id=alert_data.get("alert_id", f"TEST-{int(time.time())}"),
-                timestamp=alert_data.get("timestamp", time.time()),
-                severity=alert_data.get("severity", "MEDIUM"),
-                alert_type=alert_data.get("alert_type", "TEST_ALERT"),
-                description=alert_data.get("description", ""),
-                source=alert_data.get("source", "TEST"),
-                data=alert_data.get("data", {})
-            )
-            # IDS'in alert listesine ekle
-            state.ids.alerts.append(alert)
-            state.ids.stats.total_alerts += 1
+        # Önce gelen veriyi loglayalım
+        logger.info(f"🚨 Dışarıdan Alert Geldi: {alert_data.get('alert_type')}")
+        
+        # Dashboard'da görünmesi için geçici listeye ekle
+        if not hasattr(state, "test_alerts"):
+            state.test_alerts = []
+        
+        # Zaman damgası ekle
+        if "timestamp_iso" not in alert_data:
+            from datetime import datetime
+            alert_data["timestamp_iso"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            alert_data["timestamp"] = time.time()
+
+        state.test_alerts.append(alert_data)
+        
+        # WebSocket ile Dashboard'a gönder
+        if state.event_queue:
+            await state.event_queue.put({
+                "type": "alert",
+                "data": alert_data,
+                "timestamp": time.time()
+            })
             
-            # Alert breakdown'u güncelle
-            if not hasattr(state.ids.stats, 'alert_breakdown'):
-                state.ids.stats.alert_breakdown = {}
-            state.ids.stats.alert_breakdown[alert.severity] = \
-                state.ids.stats.alert_breakdown.get(alert.severity, 0) + 1
-            
-            logger.info(f"✓ Test alert'i eklendi: {alert.alert_type} ({alert.severity})")
-            
-            # WebSocket'e broadcast et
-            if state.event_queue:
-                try:
-                    await state.event_queue.put({
-                        "type": "alert",
-                        "data": alert.to_dict(),
-                        "timestamp": time.time()
-                    })
-                except Exception as e:
-                    logger.debug(f"WebSocket broadcast hatası: {e}")
-            
-            return {"status": "success", "alert_id": alert.alert_id}
-        else:
-            # IDS yoksa, geçici bir liste oluştur
-            if not hasattr(state, "test_alerts"):
-                state.test_alerts = []
-            
-            # Timestamp ISO formatını ekle
-            if "timestamp_iso" not in alert_data and "timestamp" in alert_data:
-                from datetime import datetime
-                alert_data["timestamp_iso"] = datetime.fromtimestamp(
-                    alert_data["timestamp"]
-                ).strftime("%Y-%m-%d %H:%M:%S")
-            
-            state.test_alerts.append(alert_data)
-            
-            # Test alert sayacını güncelle
-            if not hasattr(state, "test_alert_count"):
-                state.test_alert_count = 0
-            state.test_alert_count += 1
-            
-            logger.info(f"✓ Test alert'i geçici listeye eklendi: {alert_data.get('alert_type', 'UNKNOWN')}")
-            return {"status": "success", "alert_id": alert_data.get("alert_id"), "note": "IDS not initialized, stored in temp list"}
-    
+        return {"status": "success", "message": "Alert dashboard'a iletildi"}
+
     except Exception as e:
         logger.error(f"Alert ekleme hatası: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
-
-
+        
 @app.get("/api/stats")
 async def get_all_stats():
     """Tüm istatistikler"""
@@ -412,7 +380,7 @@ async def get_all_stats():
         if state.ml_ids:
             stats["ml"] = {
                 "is_trained": getattr(state.ml_ids, 'is_trained', False),
-                "training_samples": len(state.ml_ids.training_buffer) if hasattr(state.ml_ids, 'training_buffer') else 0,
+                "is_ready": getattr(state.ml_ids, 'is_ready', False),
                 "contamination": getattr(state.ml_ids, 'contamination', 0.1)
             }
     
@@ -723,6 +691,36 @@ async def startup_event():
     
     # Event broadcaster'ı başlat
     asyncio.create_task(event_broadcaster())
+
+    # --- Standalone Mod için IDS Başlatma ---
+    # Eğer bir Bridge yoksa (API tek başına çalışıyorsa), 
+    # ML modelini ve IDS'leri burada yükleyelim.
+    if not state.bridge_active and state.ids is None:
+        logger.info("Standalone Mod: IDS sistemleri başlatılıyor...")
+        
+        try:
+            # 1. Rule Based IDS
+            r_ids = RuleBasedIDS()
+            
+            # 2. ML Based IDS (models/isolation_forest.pkl okuyacak)
+            m_ids = MLBasedIDS()
+            
+            # 3. Hybrid IDS (İkisi birleşiyor)
+            # Not: api_server şimdilik sadece görüntüleme yaptığı için 
+            # state.hybrid_ids'e atamamız yeterli, aktif kullanmasa bile.
+            try:
+                h_ids = HybridIDS(rule_based_ids=r_ids, ml_based_ids=m_ids)
+                state.hybrid_ids = h_ids
+            except Exception as e_h:
+                logger.warning(f"Hybrid IDS başlatılamadı: {e_h}")
+
+            state.ids = r_ids
+            state.ml_ids = m_ids
+            
+            logger.info("✅ Standalone IDS (Rule-Based + ML) aktif edildi.")
+            
+        except Exception as e:
+            logger.error(f"IDS başlatma hatası: {e}")
 
 
 @app.on_event("shutdown")

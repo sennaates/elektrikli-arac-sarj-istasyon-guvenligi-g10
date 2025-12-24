@@ -10,6 +10,7 @@ import asyncio
 import websockets
 import json
 import uuid
+import requests
 from datetime import datetime
 from typing import List, Dict
 from loguru import logger
@@ -297,6 +298,105 @@ class AttackSimulator:
             
         logger.warning(f"✓ [Fail-Open Attack] tamamlandı. Sistem Offline moda zorlandı.")
 
+    # Saldırı 11: Ransomware Attack (Senaryo #5)
+    def ransomware_attack(self):
+        """
+        Senaryo #5: Ransomware Attack
+        Sahte Firmware Update komutu ve Ransomware payload gönderimi.
+        """
+        logger.warning(f"🚨 SALDIRI: Ransomware Attack (Senaryo #5) başlatılıyor...")
+        
+        # Adım 1: Sahte Firmware Update Komutu (0x230)
+        logger.info("   [Adım 1] Sahte 'UpdateFirmware' komutu gönderiliyor (ID: 0x230)")
+        fake_update_frame = CANFrame(can_id=0x230, data=[0xFF, 0xAA, 0xBB, 0xCC, 0x00, 0x00, 0x00, 0x00], dlc=8, timestamp=time.time())
+        self.can_handler.send_frame(fake_update_frame)
+        time.sleep(1.0)
+        
+        # Adım 2: Ransomware Payload (0x777)
+        logger.info("   [Adım 2] Ransomware payload paketleri gönderiliyor (ID: 0x777)")
+        for i in range(20):
+            payload = [random.randint(0, 255) for _ in range(8)]
+            ransom_frame = CANFrame(can_id=0x777, data=payload, dlc=8, timestamp=time.time())
+            self.can_handler.send_frame(ransom_frame)
+            time.sleep(0.1)
+            if i % 5 == 0:
+                logger.info(f"   ... Yükleniyor %{(i+1)*5}")
+        
+        # Adım 3: Dashboard Alarmı (Opsiyonel)
+        logger.info("   [Adım 3] Sistem kilitlendi, Dashboard alarmı tetikleniyor...")
+        try:
+            alert_data = {
+                "alert_id": f"RANSOM-{int(time.time())}",
+                "severity": "CRITICAL",
+                "alert_type": "Firmware Integrity Failure",
+                "description": "RANSOMWARE DETECTED: System locked. Unauthorized firmware update attempt.",
+                "source": "IDS_FIRMWARE_CHECK",
+                "timestamp": time.time()
+            }
+            requests.post("http://localhost:8000/api/alerts", json=alert_data, timeout=1)
+            logger.success("   ✓ Dashboard alarmı gönderildi")
+        except Exception as e:
+            logger.warning(f"   ⚠️ Dashboard alarmı gönderilemedi: {e}")
+            
+        logger.warning(f"✓ Ransomware Attack tamamlandı")
+
+    # Saldırı 12: Sensor Data Poisoning (Senaryo #7)
+    def sensor_data_poisoning(self, duration: float = 30.0):
+        """
+        Senaryo #7: Sensor Data Poisoning
+        Sensör verilerini (0x300) yavaşça manipüle ederek (drift) modeli zehirle.
+        """
+        logger.warning(f"🚨 SALDIRI: Sensor Data Poisoning (Senaryo #7) başlatılıyor...")
+        logger.info(f"   Süre: {duration}s, Hedef ID: 0x300")
+        
+        start_time = time.time()
+        # Normal değer aralığı: 50-60 (train_ml_model.py'ye göre)
+        # Biz yavaşça 60'ın üzerine çıkacağız.
+        current_val = 60
+        
+        while time.time() - start_time < duration:
+            # Drift: Her adımda biraz artır
+            current_val += 0.5
+            val_int = int(current_val)
+            if val_int > 255: val_int = 255
+            
+            # Veri paketi: [0x03, val, 0, ...]
+            data = [0x03, val_int, 0, 0, 0, 0, 0, 0]
+            frame = CANFrame(can_id=0x300, data=data, dlc=8, timestamp=time.time())
+            self.can_handler.send_frame(frame)
+            
+            logger.info(f"   [Poisoning] ID: 0x300, Val: {val_int} (Drift)")
+            time.sleep(0.5)
+            
+        logger.warning(f"✓ Sensor Data Poisoning tamamlandı")
+
+    # Saldırı 13: Latency Exploit (Senaryo #4 Ek)
+    def latency_exploit_attack(self):
+        """
+        Senaryo #4 (Ek): Latency Exploit
+        AI gecikmesinden faydalanarak voltaj düşürme saldırısı.
+        """
+        logger.warning(f"🚨 SALDIRI: Latency Exploit (Senaryo #4) başlatılıyor...")
+        
+        # 1. Başlangıç (Normal)
+        logger.info("   [1] StartTransaction (Normal Voltaj: 220V)")
+        # 0x300 sensör verisi olsun, 220V'u temsil etsin (örneğin byte 1 = 220)
+        self.can_handler.send_frame(CANFrame(can_id=0x300, data=[0x03, 220, 0,0,0,0,0,0], dlc=8, timestamp=time.time()))
+        time.sleep(0.5)
+        
+        # 2. Saldırı (Voltaj Düşer)
+        logger.info("   [2] Saldırı Anı: Voltaj Düşürülüyor (150V)")
+        # AI bunu tespit etmeli ama gecikmeli
+        self.can_handler.send_frame(CANFrame(can_id=0x300, data=[0x03, 150, 0,0,0,0,0,0], dlc=8, timestamp=time.time()))
+        
+        # 3. Fırsat Penceresi
+        time.sleep(0.5)
+        logger.info("   [3] StopTransaction (Kaçış)")
+        # Stop komutu
+        self.can_handler.send_frame(CANFrame(can_id=0x201, data=[0x02, 0,0,0,0,0,0,0], dlc=8, timestamp=time.time()))
+        
+        logger.warning(f"✓ Latency Exploit Attack tamamlandı")
+
     # Kombine saldırı
     def combined_attack(self):
         """Birden fazla saldırı tipini peş peşe uygular."""
@@ -333,6 +433,7 @@ def main():
         type=str,
         choices=["injection", "flood", "replay", "invalid_id", "entropy", 
                  "mitm", "ocpp_flood", "sampling", "fuzzing", "fail_open", 
+                 "ransomware", "poisoning", "latency",
                  "combined", "all"],
         default="combined",
         help="Saldırı tipi"
@@ -417,6 +518,12 @@ def main():
             simulator.ocpp_fuzzing_attack(target_url=args.csms_url, intensity=args.fuzz_intensity)
         elif args.attack == "fail_open":
             simulator.fail_open_attack(csms_url=args.csms_url, duration=args.fail_open_duration, dos_rate=args.dos_rate)
+        elif args.attack == "ransomware":
+            simulator.ransomware_attack()
+        elif args.attack == "poisoning":
+            simulator.sensor_data_poisoning(duration=args.sampling_duration)
+        elif args.attack == "latency":
+            simulator.latency_exploit_attack()
         elif args.attack == "combined":
             simulator.combined_attack()
         elif args.attack == "all":
@@ -432,6 +539,12 @@ def main():
             simulator.mitm_ocpp_manipulation(scenario="timing_anomaly")
             time.sleep(2)
             simulator.ocpp_fuzzing_attack(target_url=args.csms_url, intensity=5)
+            time.sleep(2)
+            simulator.ransomware_attack()
+            time.sleep(2)
+            simulator.sensor_data_poisoning(duration=10.0)
+            time.sleep(2)
+            simulator.latency_exploit_attack()
             
     except KeyboardInterrupt:
         logger.warning("\n⚠ Saldırı durduruldu (Ctrl+C)")

@@ -32,6 +32,13 @@ class AlertType(Enum):
     AUTH_TIMEOUT_PATTERN = "AUTH_TIMEOUT_PATTERN"
     FAIL_OPEN_BEHAVIOR = "FAIL_OPEN_BEHAVIOR"
     UNAUTHORIZED_CHARGE_START = "UNAUTHORIZED_CHARGE_START"
+    # Senaryo #5 (Ransomware)
+    FIRMWARE_INTEGRITY_FAILURE = "FIRMWARE_INTEGRITY_FAILURE"
+    RANSOMWARE_DETECTED = "RANSOMWARE_DETECTED"
+    # Senaryo #7 (Poisoning)
+    SENSOR_DATA_POISONING = "SENSOR_DATA_POISONING"
+    # Senaryo #4 (Latency)
+    LATENCY_EXPLOIT_DETECTED = "LATENCY_EXPLOIT_DETECTED"
 
 @dataclass
 class Alert:
@@ -175,6 +182,49 @@ class RuleBasedIDS:
                 self.stats.unauthorized_can_frames += 1
                 return alert
         
+        # Kural 4: Invalid CAN ID Check (ÖNCELİKLİ KONTROL)
+        # Ransomware ve bilinmeyen ID'leri önce yakalamalıyız.
+        if can_id not in self.allowed_can_ids:
+            # Senaryo #5: Ransomware (0x777)
+            if can_id == 0x777:
+                alert = self._create_alert(
+                    alert_type=AlertType.RANSOMWARE_DETECTED.value,
+                    severity="CRITICAL",
+                    description="RANSOMWARE PAYLOAD DETECTED (ID: 0x777)",
+                    source="CAN",
+                    data={"can_id": hex(can_id), "data": [hex(b) for b in data]}
+                )
+                logger.error(f"🚨 CRITICAL ALERT [RANSOMWARE]: {alert.description}")
+                return alert
+
+            alert = self._create_alert(
+                alert_type=AlertType.INVALID_CAN_ID.value,
+                severity="MEDIUM",
+                description=f"İzin listesinde olmayan CAN ID: {hex(can_id)}",
+                source="CAN",
+                data={"can_id": hex(can_id), "data": [hex(b) for b in data]}
+            )
+            self.stats.unauthorized_can_frames += 1
+            logger.warning(f"⚠ ALERT: {alert.description}")
+            return alert
+        
+        # Senaryo #7: Sensor Data Poisoning (0x300)
+        if can_id == 0x300:
+            # Byte 1: Value
+            val = data[1]
+            # Normal aralık: 50-60 (train_ml_model.py'ye göre)
+            # Eğer 60'ın çok üzerindeyse veya çok altındaysa
+            if val > 70 or val < 40:
+                alert = self._create_alert(
+                    alert_type=AlertType.SENSOR_DATA_POISONING.value,
+                    severity="HIGH",
+                    description=f"Sensor Data Poisoning Detected (Value: {val})",
+                    source="CAN",
+                    data={"can_id": hex(can_id), "value": val}
+                )
+                logger.warning(f"⚠ ALERT: {alert.description}")
+                return alert
+
         # Kural 1: Unauthorized Injection Check
         frame_hash = self._hash_frame(can_id, data)
         if frame_hash not in self.authorized_frames.get(can_id, set()):
@@ -217,18 +267,13 @@ class RuleBasedIDS:
                 logger.warning(f"⚠ ALERT: {alert.description}")
                 return alert
         
-        # Kural 4: Invalid CAN ID Check
-        if can_id not in self.allowed_can_ids:
-            alert = self._create_alert(
-                alert_type=AlertType.INVALID_CAN_ID.value,
-                severity="MEDIUM",
-                description=f"İzin listesinde olmayan CAN ID: {hex(can_id)}",
-                source="CAN",
-                data={"can_id": hex(can_id), "data": [hex(b) for b in data]}
-            )
-            logger.warning(f"⚠ ALERT: {alert.description}")
-            return alert
+        # Kural 4: Invalid CAN ID Check (Duplicate removed)
+        # Yukarıda kontrol edildiği için buradaki bloğu kaldırıyoruz.
+        # self.recent_messages güncellemesi için devam ediyoruz.
         
+        self.recent_messages.append((timestamp, frame_hash))
+        return None
+
         self.recent_messages.append((timestamp, frame_hash))
         return None
     
