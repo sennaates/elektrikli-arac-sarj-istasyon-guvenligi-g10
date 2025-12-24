@@ -182,13 +182,21 @@ async def root():
 @app.get("/api/health")
 async def health_check():
     """Health check"""
+    # ML-IDS durumunu kontrol et
+    ml_ids_active = False
+    if state.ml_ids is not None and getattr(state.ml_ids, 'is_trained', False):
+        ml_ids_active = True
+    elif state.bridge_active and state.bridge_stats and "ml" in state.bridge_stats:
+        ml_stats = state.bridge_stats.get("ml", {})
+        ml_ids_active = ml_stats.get("is_trained", False) if ml_stats else False
+    
     return {
         "status": "healthy",
         "timestamp": time.time(),
         "components": {
             "blockchain": state.blockchain is not None or (state.bridge_active and state.bridge_stats and "blockchain" in state.bridge_stats),
             "ids": state.ids is not None or (state.bridge_active and state.bridge_stats and "ids" in state.bridge_stats),
-            "ml_ids": (state.ml_ids is not None and getattr(state.ml_ids, 'is_ready', False)) or (state.bridge_active and state.bridge_stats and "ml" in state.bridge_stats),
+            "ml_ids": ml_ids_active,
             "bridge": state.bridge_active
         }
     }
@@ -380,7 +388,7 @@ async def get_all_stats():
         if state.ml_ids:
             stats["ml"] = {
                 "is_trained": getattr(state.ml_ids, 'is_trained', False),
-                "is_ready": getattr(state.ml_ids, 'is_ready', False),
+                "model_loaded": state.ml_ids.model is not None,
                 "contamination": getattr(state.ml_ids, 'contamination', 0.1)
             }
     
