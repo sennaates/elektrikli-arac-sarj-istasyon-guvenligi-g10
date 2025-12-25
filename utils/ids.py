@@ -71,6 +71,12 @@ class TrafficStats:
     consecutive_auth_timeouts: int = 0
     charge_starts_without_auth: int = 0
     last_successful_auth_time: Optional[float] = None
+    
+    # Senaryo #5: Duplicate Booking tracking
+    reservations: Dict[str, Dict] = field(default_factory=dict)  # reservationId -> {connectorId, idTag, timestamp, expiry}
+    reservation_ids_used: Set[str] = field(default_factory=set)  # Kullanılmış reservation ID'ler
+    connector_reservations: Dict[int, List[str]] = field(default_factory=lambda: defaultdict(list))  # connectorId -> [reservationId]
+    reservation_to_transaction: Dict[str, str] = field(default_factory=dict)  # reservationId -> transactionId
 
 
 class RuleBasedIDS:
@@ -108,6 +114,10 @@ class RuleBasedIDS:
         self.auth_timeout_window = 60.0  # saniye
         self.consecutive_timeout_threshold = 5  # 5 ardışık timeout
         self.fail_open_detection_window = 10.0  # saniye (fail-open tespit penceresi)
+        
+        # Senaryo #5: Duplicate Booking thresholds
+        self.duplicate_reservation_window = 60.0  # saniye (çift rezervasyon tespit penceresi)
+        self.reservation_reuse_window = 300.0  # saniye (5 dakika - rezervasyon ID tekrar kullanım tespiti)
         
         # İzin verilen CAN ID'ler (whitelist)
         self.allowed_can_ids = allowed_can_ids or {
@@ -586,6 +596,174 @@ class RuleBasedIDS:
             )
             logger.error(f"🚨 CRITICAL ALERT [SCENARIO-4]: {alert.description}")
             return alert
+        
+        return None
+    
+    def check_reservation(
+        self,
+        reservation_id: str,
+        connector_id: int,
+        id_tag: str,
+        timestamp: float,
+        expiry_date: Optional[str] = None,
+        action: str = "ReserveNow"
+    ) -> Optional[Alert]:
+        """
+        Senaryo #5: Rezervasyon (ReserveNow) kontrolü - Duplicate Booking tespiti.
+        
+        Args:
+            reservation_id: Rezervasyon ID'si
+            connector_id: Connector ID
+            id_tag: Kullanıcı ID tag'i
+            timestamp: Rezervasyon zamanı
+            expiry_date: Rezervasyon bitiş zamanı (ISO format)
+            action: OCPP action ("ReserveNow" veya "CancelReservation")
+        
+        Returns:
+            Alert objesi veya None
+        """
+        if action == "CancelReservation":
+            # Rezervasyon iptal edildi, kayıttan çıkar
+            if reservation_id in self.stats.reservations:
+                connector_id = self.stats.reservations[reservation_id]["connector_id"]
+                if connector_id in self.stats.connector_reservations:
+                    if reservation_id in self.stats.connector_reservations[connector_id]:
+                        self.stats.connector_reservations[connector_id].remove(reservation_id)
+                del self.stats.reservations[reservation_id]
+            return None
+        
+        # Kural-1: Duplicate Reservation ID Tespiti (CRITICAL)
+        if reservation_id in self.stats.reservations:
+            existing_reservation = self.stats.reservations[reservation_id]
+            time_diff = timestamp - existing_reservation["timestamp"]
+            
+            if time_diff <= self.duplicate_reservation_window:
+                alert = self._create_alert(
+                    alert_type="DUPLICATE_RESERVATION_ID",
+                    severity="CRITICAL",
+                    description=f"Çift rezervasyon ID tespit edildi: {reservation_id} (önceki rezervasyon {time_diff:.1f}s önce)",
+                    source="OCPP",
+                    data={
+                        "reservation_id": reservation_id,
+                        "connector_id": connector_id,
+                        "id_tag": id_tag,
+                        "existing_connector": existing_reservation["connector_id"],
+                        "existing_id_tag": existing_reservation["id_tag"],
+                        "time_diff": round(time_diff, 2),
+                        "window": self.duplicate_reservation_window,
+                        "note": "Aynı rezervasyon ID birden fazla kez kullanıldı"
+                    }
+                )
+                logger.error(f"🚨 CRITICAL ALERT [SCENARIO-5]: {alert.description}")
+                return alert
+        
+        # Kural-3: Reservation ID Reuse Pattern (HIGH)
+        if reservation_id in self.stats.reservation_ids_used:
+            # Daha önce kullanılmış bir ID tekrar kullanılıyor
+            alert = self._create_alert(
+                alert_type="RESERVATION_ID_REUSE",
+                severity="HIGH",
+                description=f"Rezervasyon ID tekrar kullanımı: {reservation_id} daha önce kullanılmış",
+                source="OCPP",
+                data={
+                    "reservation_id": reservation_id,
+                    "connector_id": connector_id,
+                    "id_tag": id_tag,
+                    "note": "Rezervasyon ID'leri benzersiz olmalı (UUID önerilir)"
+                }
+            )
+            logger.warning(f"⚠ ALERT [SCENARIO-5]: {alert.description}")
+            return alert
+        
+        # Rezervasyonu kaydet
+        self.stats.reservations[reservation_id] = {
+            "connector_id": connector_id,
+            "id_tag": id_tag,
+            "timestamp": timestamp,
+            "expiry_date": expiry_date
+        }
+        self.stats.reservation_ids_used.add(reservation_id)
+        self.stats.connector_reservations[connector_id].append(reservation_id)
+        
+        # Kural-2: Multiple Reservations for Same Connector (CRITICAL)
+        active_reservations = self.stats.connector_reservations[connector_id]
+        if len(active_reservations) > 1:
+            alert = self._create_alert(
+                alert_type="MULTIPLE_CONNECTOR_RESERVATIONS",
+                severity="CRITICAL",
+                description=f"Aynı connector ({connector_id}) için {len(active_reservations)} aktif rezervasyon tespit edildi",
+                source="OCPP",
+                data={
+                    "connector_id": connector_id,
+                    "reservation_count": len(active_reservations),
+                    "reservation_ids": active_reservations,
+                    "current_reservation_id": reservation_id,
+                    "current_id_tag": id_tag,
+                    "note": "Bir connector'a aynı anda tek rezervasyon olmalı"
+                }
+            )
+            logger.error(f"🚨 CRITICAL ALERT [SCENARIO-5]: {alert.description}")
+            return alert
+        
+        return None
+    
+    def check_reservation_transaction_match(
+        self,
+        transaction_id: str,
+        id_tag: str,
+        connector_id: int,
+        timestamp: float
+    ) -> Optional[Alert]:
+        """
+        Senaryo #5: Rezervasyon-Transaction eşleşmesi kontrolü.
+        StartTransaction'da kullanılan idTag, rezervasyondaki idTag ile eşleşmeli.
+        
+        Args:
+            transaction_id: Transaction ID
+            id_tag: StartTransaction'da kullanılan idTag
+            connector_id: Connector ID
+            timestamp: İşlem zamanı
+        
+        Returns:
+            Alert objesi veya None
+        """
+        # Bu connector için aktif rezervasyon var mı?
+        active_reservations = self.stats.connector_reservations.get(connector_id, [])
+        
+        if not active_reservations:
+            # Rezervasyon olmadan şarj başlatıldı (bu başka bir senaryo olabilir)
+            return None
+        
+        # En son rezervasyonu kontrol et
+        for reservation_id in active_reservations:
+            if reservation_id in self.stats.reservations:
+                reservation = self.stats.reservations[reservation_id]
+                reservation_id_tag = reservation["id_tag"]
+                
+                # Kural-5: Reservation-Transaction Mismatch (CRITICAL)
+                if reservation_id_tag != id_tag:
+                    alert = self._create_alert(
+                        alert_type="RESERVATION_TRANSACTION_MISMATCH",
+                        severity="CRITICAL",
+                        description=f"Rezervasyon-İşlem uyuşmazlığı: Rezervasyondaki idTag ({reservation_id_tag}) ile StartTransaction'daki idTag ({id_tag}) eşleşmiyor",
+                        source="OCPP",
+                        data={
+                            "reservation_id": reservation_id,
+                            "reservation_id_tag": reservation_id_tag,
+                            "transaction_id_tag": id_tag,
+                            "connector_id": connector_id,
+                            "transaction_id": transaction_id,
+                            "note": "Yetkisiz kullanıcı başkasının rezervasyonunu kullanıyor olabilir"
+                        }
+                    )
+                    logger.error(f"🚨 CRITICAL ALERT [SCENARIO-5]: {alert.description}")
+                    return alert
+                
+                # Eşleşme başarılı, rezervasyonu transaction'a bağla
+                self.stats.reservation_to_transaction[reservation_id] = transaction_id
+                # Rezervasyonu aktif listeden çıkar (şarj başladı)
+                if reservation_id in self.stats.connector_reservations[connector_id]:
+                    self.stats.connector_reservations[connector_id].remove(reservation_id)
         
         return None
     

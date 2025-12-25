@@ -3,6 +3,7 @@ Basit CSMS Simülatörü - Test İçin
 OCPP 1.6 WebSocket sunucusu simüle eder.
 """
 import asyncio
+import time
 import websockets
 import json
 from datetime import datetime
@@ -90,6 +91,26 @@ class SimpleCSMS:
                                 3,  # CALLRESULT
                                 message_id,
                                 {}
+                            ]
+                        
+                        elif action == "ReserveNow":
+                            # Senaryo #5: ReserveNow yanıtı
+                            response = [
+                                3,  # CALLRESULT
+                                message_id,
+                                {"status": "Accepted"}
+                            ]
+                        
+                        elif action == "StartTransaction":
+                            # Senaryo #5: StartTransaction yanıtı
+                            transaction_id = int(time.time() * 1000) % 100000
+                            response = [
+                                3,  # CALLRESULT
+                                message_id,
+                                {
+                                    "transactionId": transaction_id,
+                                    "idTagInfo": {"status": "Accepted"}
+                                }
                             ]
                         
                         else:

@@ -195,6 +195,115 @@ class SecureChargePoint(cp if OCPP_AVAILABLE else object):
             status="Accepted" if success else "Rejected"
         )
     
+    @on('ReserveNow')
+    async def on_reserve_now(self, **kwargs):
+        """CSMS'den ReserveNow komutu geldi (Senaryo #5: Duplicate Booking)"""
+        connector_id = kwargs.get('connector_id', 1)
+        id_tag = kwargs.get('id_tag', '')
+        reservation_id = kwargs.get('reservation_id', '')
+        expiry_date = kwargs.get('expiry_date', None)
+        
+        logger.info(f"📅 ReserveNow alındı: reservationId={reservation_id}, connector={connector_id}, tag={id_tag}")
+        
+        # 1. OCPP mesajını blockchain'e kaydet
+        self.blockchain.add_block({
+            "action": "ReserveNow",
+            "reservation_id": reservation_id,
+            "connector_id": connector_id,
+            "id_tag": id_tag,
+            "expiry_date": expiry_date
+        }, block_type="OCPP")
+        
+        # 2. IDS kontrolü: Duplicate Booking Detection (Senaryo #5)
+        alert = self.ids.rule_based_ids.check_reservation(
+            reservation_id=reservation_id,
+            connector_id=connector_id,
+            id_tag=id_tag,
+            timestamp=time.time(),
+            expiry_date=expiry_date,
+            action="ReserveNow"
+        )
+        
+        if alert and alert.severity in ["HIGH", "CRITICAL"]:
+            logger.error(f"🚨 IDS ALERT [SCENARIO-5]: {alert.description}")
+            self.blockchain.add_block(alert.to_dict(), block_type="ALERT")
+            
+            # Dashboard'a bildir
+            if self.api_callback:
+                await self.api_callback("alert", alert.to_dict())
+            
+            # Rezervasyonu reddet
+            return call_result.ReserveNowPayload(status="Rejected")
+        
+        logger.info(f"✓ Rezervasyon kabul edildi: {reservation_id}")
+        
+        # Dashboard'a bildir
+        if self.api_callback:
+            await self.api_callback("ocpp_message", {
+                "action": "ReserveNow",
+                "status": "Accepted",
+                "reservation_id": reservation_id
+            })
+        
+        return call_result.ReserveNowPayload(status="Accepted")
+    
+    @on('StartTransaction')
+    async def on_start_transaction(self, **kwargs):
+        """CP'den StartTransaction mesajı geldi (Senaryo #5: Reservation-Transaction Match)"""
+        connector_id = kwargs.get('connector_id', 1)
+        id_tag = kwargs.get('id_tag', '')
+        meter_start = kwargs.get('meter_start', 0)
+        timestamp = kwargs.get('timestamp', datetime.utcnow().isoformat())
+        
+        logger.info(f"🔌 StartTransaction alındı: connector={connector_id}, tag={id_tag}")
+        
+        # Senaryo #5: Rezervasyon-Transaction eşleşmesi kontrolü
+        transaction_id = f"TXN-{int(time.time() * 1000)}"
+        alert = self.ids.rule_based_ids.check_reservation_transaction_match(
+            transaction_id=transaction_id,
+            id_tag=id_tag,
+            connector_id=connector_id,
+            timestamp=time.time()
+        )
+        
+        if alert and alert.severity in ["HIGH", "CRITICAL"]:
+            logger.error(f"🚨 IDS ALERT [SCENARIO-5]: {alert.description}")
+            self.blockchain.add_block(alert.to_dict(), block_type="ALERT")
+            
+            # Dashboard'a bildir
+            if self.api_callback:
+                await self.api_callback("alert", alert.to_dict())
+            
+            # Transaction'ı reddet
+            return call_result.StartTransactionPayload(
+                transaction_id=None,
+                id_tag_info={"status": "Invalid"}
+            )
+        
+        # Transaction başlat
+        transaction_id_int = int(time.time() * 1000) % 100000
+        self.active_transactions[transaction_id_int] = {
+            "connector_id": connector_id,
+            "id_tag": id_tag,
+            "start_time": time.time(),
+            "meter_start": meter_start
+        }
+        
+        logger.info(f"✓ Transaction başlatıldı: #{transaction_id_int}")
+        
+        # Dashboard'a bildir
+        if self.api_callback:
+            await self.api_callback("ocpp_message", {
+                "action": "StartTransaction",
+                "status": "Accepted",
+                "transaction_id": transaction_id_int
+            })
+        
+        return call_result.StartTransactionPayload(
+            transaction_id=transaction_id_int,
+            id_tag_info={"status": "Accepted"}
+        )
+    
     @on('RemoteStopTransaction')
     async def on_remote_stop_transaction(self, transaction_id: int, **kwargs):
         """CSMS'den RemoteStopTransaction komutu geldi"""
